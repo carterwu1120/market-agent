@@ -8,13 +8,13 @@
 
 ## 功能
 
-- 📰 **即時新聞** — RSS（鉅亨網、Reuters）+ NewsAPI 多源整合
-- 📈 **技術面分析** — RSI、MACD、布林通道、MA20/60（yfinance + pandas-ta）
-- 📊 **基本面分析** — PE、PB、EPS、ROE、分析師評等（Yahoo Finance）
-- 🧩 **籌碼面分析** — 三大法人買賣超、融資融券（TWSE 公開 API）
+- 📰 **即時新聞** — RSS（Bloomberg、FT、經濟日報、工商時報）+ NewsAPI + GNews 多源整合，任一來源失敗不影響其他
+- 📈 **技術面分析** — RSI、MACD、MA20、EMA12（yfinance + pandas-ta）✅
+- 📊 **基本面分析** — PE、PB、EPS、ROE、分析師評等（Yahoo Finance）✅
+- 🧩 **籌碼面分析** — 三大法人買賣超（TWSE 公開 API）✅ | 融資融券 ⚠️ API 不穩定
 - 💬 **社群訊號** — PTT Stock 板關鍵字監控（大單、訂單、法說等）
-- 🧠 **RAG 知識庫** — pgvector 向量搜尋，自訂技術分析知識
-- 💾 **對話記憶** — Redis session + PostgreSQL 長期記憶
+- 🧠 **RAG 知識庫** — pgvector 向量搜尋，自訂技術分析知識（需 Docker 啟動 DB）
+- 💾 **對話記憶** — Redis session + PostgreSQL 長期記憶（需 Docker 啟動 DB）
 - 🤖 **LLM 可切換** — Ollama（本地）/ OpenAI / Gemini / vLLM，改 `.env` 即可
 
 ---
@@ -61,10 +61,10 @@ news_agent  technical_agent  chip_agent  social_agent
 | 檔案 | 職責 | 數據來源 |
 |------|------|---------|
 | [`orchestrator.py`](src/agents/orchestrator.py) | 意圖分類、ticker 提取、路由決策 | LLM |
-| [`news_agent.py`](src/agents/news_agent.py) | 抓取近 24h 新聞 | RSS, NewsAPI |
-| [`technical_agent.py`](src/agents/technical_agent.py) | RSI、MACD、布林、均線 | yfinance |
-| [`fundamental_agent.py`](src/agents/fundamental_agent.py) | PE、ROE、分析師評等 | yfinance |
-| [`chip_agent.py`](src/agents/chip_agent.py) | 三大法人、融資融券 | TWSE 公開 API |
+| [`news_agent.py`](src/agents/news_agent.py) | 抓取近 24h 新聞 | RSS（Bloomberg/FT/經濟日報/工商時報）、NewsAPI、GNews |
+| [`technical_agent.py`](src/agents/technical_agent.py) | RSI、MACD、MA20、EMA12 ✅ / BB、MA60 需更長歷史資料 | yfinance + pandas-ta |
+| [`fundamental_agent.py`](src/agents/fundamental_agent.py) | PE、PB、EPS、ROE、分析師評等 ✅ | Yahoo Finance |
+| [`chip_agent.py`](src/agents/chip_agent.py) | 三大法人買賣超 ✅ / 融資融券 ⚠️ | TWSE 公開 API |
 | [`social_agent.py`](src/agents/social_agent.py) | PTT 關鍵字訊號 | PTT Stock |
 | [`rag_agent.py`](src/agents/rag_agent.py) | 知識庫向量搜尋 | pgvector |
 | [`synthesizer.py`](src/agents/synthesizer.py) | 整合所有數據，呼叫 LLM 生成報告 | 所有以上 |

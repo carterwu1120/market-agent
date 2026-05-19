@@ -15,7 +15,7 @@ from src.config import settings
 TW_RSS_FEEDS = [
     ("鉅亨網-台股", "https://feeds.cnyes.com/feeds/cat/tw_stock.xml"),
     ("鉅亨網-國際", "https://feeds.cnyes.com/feeds/cat/wd_stock.xml"),
-    ("MoneyDJ-頭條", "https://www.moneydj.com/rss/news.aspx"),
+    ("工商時報", "https://ctee.com.tw/feed"),
     ("經濟日報", "https://money.udn.com/rssfeed/news/1001/5591?ch=money"),
 ]
 
@@ -126,12 +126,66 @@ async def fetch_newsapi(query: str = "stock market Taiwan", lookback_hours: int 
     return articles
 
 
+async def fetch_gnews(query: str = "stock market", lookback_hours: int | None = None) -> list[NewsArticle]:
+    """Fetch news from GNews API. Free tier has 12h delay."""
+    if not settings.gnews_api_key:
+        return []
+
+    lookback_hours = lookback_hours or settings.news_lookback_hours
+    async with httpx.AsyncClient(timeout=15) as client:
+        try:
+            resp = await client.get(
+                "https://gnews.io/api/v4/search",
+                params={
+                    "q": query,
+                    "max": settings.max_news_per_run,
+                    "apikey": settings.gnews_api_key,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:
+            logger.warning(f"GNews fetch failed: {exc}")
+            return []
+
+    articles = []
+    for item in data.get("articles", []):
+        try:
+            pub_dt = datetime.fromisoformat(item["publishedAt"].replace("Z", "+00:00"))
+            articles.append(NewsArticle(
+                title=item.get("title", ""),
+                content=(item.get("description") or "") + "\n" + (item.get("content") or ""),
+                source_url=item.get("url", ""),
+                source_name=item.get("source", {}).get("name", "GNews"),
+                published_at=pub_dt,
+            ))
+        except Exception:
+            continue
+
+    logger.info(f"GNews: fetched {len(articles)} articles for query '{query}'")
+    return articles
+
+
 async def fetch_all_news(lookback_hours: int | None = None) -> list[NewsArticle]:
-    """Aggregate from all configured sources, deduplicate by URL."""
-    from itertools import chain
-    rss = await fetch_rss_news(lookback_hours)
-    api = await fetch_newsapi(lookback_hours=lookback_hours)
-    all_articles = list(chain(rss, api))
+    """Aggregate from all sources concurrently, deduplicate by URL.
+
+    Each source fails independently — one failure does not affect others.
+    """
+    import asyncio
+    results = await asyncio.gather(
+        fetch_rss_news(lookback_hours),
+        fetch_newsapi(lookback_hours=lookback_hours),
+        fetch_gnews(lookback_hours=lookback_hours),
+        return_exceptions=True,
+    )
+
+    all_articles = []
+    for r in results:
+        if isinstance(r, Exception):
+            logger.warning(f"News source failed: {r}")
+        else:
+            all_articles.extend(r)
+
     # Deduplicate by URL
     seen: set[str] = set()
     unique = []
@@ -139,5 +193,6 @@ async def fetch_all_news(lookback_hours: int | None = None) -> list[NewsArticle]
         if a.source_url and a.source_url not in seen:
             seen.add(a.source_url)
             unique.append(a)
+
     logger.info(f"Total unique articles: {len(unique)}")
     return unique

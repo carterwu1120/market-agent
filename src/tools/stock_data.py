@@ -57,7 +57,7 @@ async def get_stock_price(symbol: str) -> dict[str, Any]:
 
 # ── Technical Analysis ────────────────────────────────────────────────────────
 
-async def get_technical_indicators(symbol: str, period: str = "3mo") -> dict[str, Any]:
+async def get_technical_indicators(symbol: str, period: str = "6mo") -> dict[str, Any]:
     """Compute MA, RSI, MACD, Bollinger Bands from yfinance OHLCV."""
     ticker_sym = _tw_ticker(symbol)
 
