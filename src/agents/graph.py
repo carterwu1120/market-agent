@@ -36,7 +36,7 @@ def _route_after_orchestrator(state: AgentState) -> list[str]:
     # Skip news_agent when Redis cache is still fresh
     news_agents = [] if state.news_cached else ["news_agent"]
 
-    if intent in ("stock_query", "sector_query", "follow_up"):
+    if intent in ("stock_query", "sector_query", "theme_query", "follow_up"):
         if state.target_symbols:
             return news_agents + ["technical_agent", "fundamental_agent", "chip_agent", "social_agent", "rag_agent"]
         return news_agents + ["social_agent", "rag_agent"]

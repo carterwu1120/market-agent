@@ -135,8 +135,12 @@ def _summarize_social(data: list[dict]) -> str:
 async def synthesizer_node(state: AgentState) -> dict:
     logger.info("Synthesizer: generating report")
 
-    # If news_agent was skipped (cache hit), load news from Redis cache now
+    # theme_query: use theme_articles (news from keyword search) as primary news source
     news_articles = state.news_articles
+    if state.theme_articles:
+        news_articles = state.theme_articles + news_articles
+
+    # If news_agent was skipped (cache hit), load news from Redis cache now
     if not news_articles and state.news_cached:
         cached = await load_news_cache()
         if cached:
@@ -144,7 +148,12 @@ async def synthesizer_node(state: AgentState) -> dict:
             logger.info(f"Synthesizer: loaded {len(news_articles)} articles from cache (news_agent was skipped)")
 
     # Build query context description for the prompt
-    if state.sector_names:
+    if state.intent == "theme_query":
+        query_context = (
+            f"主題查詢：「{state.sector_query}」"
+            f"（從 {len(state.theme_articles)} 則相關新聞中找出 {len(state.target_symbols)} 檔個股）"
+        )
+    elif state.sector_names:
         sector_label = "、".join(state.sector_names)
         query_context = f"類股查詢：{sector_label}（共 {len(state.target_symbols)} 檔代表股）"
     elif state.target_symbols:
