@@ -1,5 +1,6 @@
 """Async SQLAlchemy engine + session factory."""
 
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from src.config import settings
