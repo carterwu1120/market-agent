@@ -94,8 +94,12 @@ async def _process_and_reply(
         async def send(text: str):
             await msg.channel.send(text)
 
-    # Load session history from Redis
-    history = await get_session_messages(channel_id, user_id)
+    # Load session history from Redis — best-effort, empty on failure
+    try:
+        history = await get_session_messages(channel_id, user_id)
+    except Exception as exc:
+        logger.warning(f"Redis read failed, proceeding with empty history: {exc}")
+        history = []
 
     try:
         result = await run_agent(
@@ -111,26 +115,32 @@ async def _process_and_reply(
         logger.error(f"Agent pipeline error: {exc}", exc_info=True)
         report = f"⚠️ 系統錯誤：{exc}"
 
-    # Persist to Redis session
-    await append_message(channel_id, user_id, "user", user_message)
-    await append_message(channel_id, user_id, "assistant", report[:500])  # brief summary in session
-
-    # Persist to PostgreSQL async
-    asyncio.create_task(_persist_to_db(user_id, username, channel_id, user_message, report))
-
-    # Send response in chunks
+    # Send response first — cache/persistence failures must not block the reply
     for chunk in chunk_message(report):
         await send(chunk)
+
+    # Persist to Redis session — best-effort
+    try:
+        await append_message(channel_id, user_id, "user", user_message)
+        await append_message(channel_id, user_id, "assistant", report[:500])
+    except Exception as exc:
+        logger.warning(f"Redis write failed (session not saved): {exc}")
+
+    # Persist to PostgreSQL async — errors logged inside the task
+    asyncio.create_task(_persist_to_db(user_id, username, channel_id, user_message, report))
 
 
 async def _persist_to_db(
     user_id: str, username: str, channel_id: str, user_msg: str, assistant_msg: str
 ) -> None:
-    async with AsyncSessionFactory() as session:
-        user = await get_or_create_user(session, int(user_id), username)
-        conv = await get_or_create_conversation(session, user.id, channel_id)
-        await save_message(session, conv.id, "user", user_msg)
-        await save_message(session, conv.id, "assistant", assistant_msg)
+    try:
+        async with AsyncSessionFactory() as session:
+            user = await get_or_create_user(session, int(user_id), username)
+            conv = await get_or_create_conversation(session, user.id, channel_id)
+            await save_message(session, conv.id, "user", user_msg)
+            await save_message(session, conv.id, "assistant", assistant_msg)
+    except Exception as exc:
+        logger.error(f"DB persistence failed for user {user_id}: {exc}")
 
 
 # ── Slash Commands ────────────────────────────────────────────────────────────

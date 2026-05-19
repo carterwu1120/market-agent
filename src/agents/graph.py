@@ -33,8 +33,10 @@ _ALL_DATA_AGENTS = [
 def _route_after_orchestrator(state: AgentState) -> list[str]:
     """Fan-out: decide which sub-agents to run based on intent."""
     intent = state.intent
-    if intent == "stock_query":
-        return _ALL_DATA_AGENTS
+    if intent in ("stock_query", "follow_up"):
+        # follow_up may reference a previously discussed stock — run full pipeline
+        # so technical/fundamental/chip data is available if symbols were resolved
+        return _ALL_DATA_AGENTS if state.target_symbols else ["news_agent", "social_agent", "rag_agent"]
     elif intent == "daily_brief":
         return ["news_agent", "social_agent", "rag_agent"]
     else:

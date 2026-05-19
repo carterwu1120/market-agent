@@ -26,7 +26,7 @@ TW_COMPANY_TO_CODE: dict[str, str] = {
     "玉山金": "2884.TW",
 }
 
-INTENT_PROMPT = """You are a financial assistant router. Analyze the user message and return JSON.
+INTENT_SYSTEM = """You are a financial assistant router. Analyze the user message and return JSON.
 
 Intents:
 - "daily_brief": User wants today's market summary or investment recommendations
@@ -35,11 +35,10 @@ Intents:
 - "unknown": Cannot determine
 
 Extract Taiwan stock codes from company names using your knowledge.
+If the user refers to a stock mentioned in the conversation history, include it in symbols.
 
 Return ONLY valid JSON:
-{{"intent": "<intent>", "symbols": ["2330.TW", ...], "reasoning": "brief reason"}}
-
-User message: {message}
+{"intent": "<intent>", "symbols": ["2330.TW", ...], "reasoning": "brief reason"}
 """
 
 
@@ -52,10 +51,19 @@ async def orchestrator_node(state: AgentState) -> dict:
     bare_codes = re.findall(r"\b(\d{4})(?:\.TW)?\b", msg)
     pre_symbols = [f"{c}.TW" for c in bare_codes]
 
-    # LLM-based intent classification
+    # LLM-based intent classification — include recent history for follow-up context
+    history_messages = [
+        {"role": m["role"], "content": m["content"]}
+        for m in (state.conversation_history or [])[-6:]  # last 3 turns
+        if m.get("role") in ("user", "assistant")
+    ]
     try:
         raw = await llm_chat(
-            messages=[{"role": "user", "content": INTENT_PROMPT.format(message=msg)}],
+            messages=[
+                {"role": "system", "content": INTENT_SYSTEM},
+                *history_messages,
+                {"role": "user", "content": msg},
+            ],
             temperature=0.1,
         )
         # Strip markdown fences if present

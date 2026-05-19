@@ -7,11 +7,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ libpq-dev curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps first (layer cache)
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e ".[dev]" || pip install --no-cache-dir -e .
-
+# Copy everything first so editable install can find src/
 COPY . .
+
+# Install in editable mode; fall back to non-dev if dev extras are absent
+RUN pip install --no-cache-dir -e ".[dev]" || pip install --no-cache-dir -e .
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
