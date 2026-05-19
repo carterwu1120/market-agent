@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "market-agent"
+version = "0.1.0"
+description = "LangGraph multi-agent stock market analysis bot"
+requires-python = ">=3.11"
+
+dependencies = [
+    # LangGraph / LangChain
+    "langgraph>=0.2.0",
+    "langchain>=0.3.0",
+    "langchain-community>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langchain-google-genai>=2.0.0",
+
+    # LLM abstraction
+    "litellm>=1.50.0",
+
+    # Data sources
+    "yfinance>=0.2.40",
+    "feedparser>=6.0.11",        # RSS
+    "httpx>=0.27.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0",
+
+    # Technical analysis
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    "pandas-ta>=0.3.14b",        # TA indicators (no TA-Lib C dep)
+
+    # Memory & storage
+    "asyncpg>=0.29.0",
+    "pgvector>=0.3.0",
+    "sqlalchemy[asyncio]>=2.0.0",
+    "redis[hiredis]>=5.0.0",
+    "alembic>=1.13.0",
+
+    # RAG / embeddings
+    "sentence-transformers>=3.0.0",
+
+    # Discord bot
+    "discord.py>=2.4.0",
+
+    # Config & utilities
+    "pydantic-settings>=2.4.0",
+    "python-dotenv>=1.0.0",
+    "tenacity>=9.0.0",
+    "loguru>=0.7.2",
+    "rich>=13.7.0",              # CLI pretty output
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-mock>=3.14.0",
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
+]
+
+[project.scripts]
+market-agent = "src.main:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
