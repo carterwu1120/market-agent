@@ -8,7 +8,8 @@
 
 ## 功能
 
-- 📰 **即時新聞** — RSS（Bloomberg、FT、經濟日報、工商時報）+ NewsAPI + GNews 多源整合，任一來源失敗不影響其他
+- 📰 **即時新聞** — RSS（Bloomberg、FT、經濟日報、MoneyUDN）+ NewsAPI + GNews 多源整合，任一來源失敗不影響其他；Redis 快取 30 分鐘，重複查詢自動跳過爬蟲
+- 🏭 **類股查詢** — 輸入「半導體」「傳產」「金融股」等關鍵字，自動從 TWSE 抓取該產業所有成份股（1077 檔 / 32 產業），fallback 至代表股清單
 - 📈 **技術面分析** — RSI、MACD、MA20、EMA12（yfinance + pandas-ta）✅
 - 📊 **基本面分析** — PE、PB、EPS、ROE、分析師評等（Yahoo Finance）✅
 - 🧩 **籌碼面分析** — 三大法人買賣超（TWSE 公開 API）✅ | 融資融券 ⚠️ API 不穩定
@@ -60,9 +61,9 @@ news_agent  technical_agent  chip_agent  social_agent
 
 | 檔案 | 職責 | 數據來源 |
 |------|------|---------|
-| [`orchestrator.py`](src/agents/orchestrator.py) | 意圖分類、ticker 提取、路由決策 | LLM |
-| [`news_agent.py`](src/agents/news_agent.py) | 抓取近 24h 新聞 | RSS（Bloomberg/FT/經濟日報/工商時報）、NewsAPI、GNews |
-| [`technical_agent.py`](src/agents/technical_agent.py) | RSI、MACD、MA20、EMA12 ✅ / BB、MA60 需更長歷史資料 | yfinance + pandas-ta |
+| [`orchestrator.py`](src/agents/orchestrator.py) | 意圖分類、ticker/sector 提取、路由決策（含快取判斷） | LLM + Redis |
+| [`news_agent.py`](src/agents/news_agent.py) | 抓取近 24h 新聞（Redis 快取命中時由 orchestrator 跳過）| RSS（Bloomberg/FT/經濟日報/MoneyUDN）、NewsAPI、GNews |
+| [`technical_agent.py`](src/agents/technical_agent.py) | RSI、MACD、MA20、MA60 ✅、BB ✅、EMA12 ✅ | yfinance + pandas-ta |
 | [`fundamental_agent.py`](src/agents/fundamental_agent.py) | PE、PB、EPS、ROE、分析師評等 ✅ | Yahoo Finance |
 | [`chip_agent.py`](src/agents/chip_agent.py) | 三大法人買賣超 ✅ / 融資融券 ⚠️ | TWSE 公開 API |
 | [`social_agent.py`](src/agents/social_agent.py) | PTT 關鍵字訊號 | PTT Stock |
@@ -78,7 +79,7 @@ builder = StateGraph(AgentState)          # 共享狀態定義於 state.py
 
 builder.set_entry_point("orchestrator")
 
-# Conditional fan-out：根據 intent 決定啟動哪些 agent
+# Conditional fan-out：根據 intent 與 cache 狀態決定啟動哪些 agent
 builder.add_conditional_edges(
     "orchestrator",
     _route_after_orchestrator,            # 回傳要執行的 node 名稱列表
@@ -90,7 +91,23 @@ for node in _ALL_DATA_AGENTS:
     builder.add_edge(node, "synthesizer")
 ```
 
+**動態 routing**：`_route_after_orchestrator` 根據 `state.news_cached` 決定是否把 `news_agent` 加入 fan-out 清單。Redis 有新聞快取（TTL 30 分鐘）時，orchestrator 直接跳過 news_agent，節省 20–30 秒爬蟲時間。這是 LangGraph 相較傳統靜態 pipeline 的核心優勢：**每次執行的圖路徑可依 runtime 狀態動態調整**。
+
 **共享狀態**（[`state.py`](src/agents/state.py)）：所有 agent 讀寫同一個 `AgentState`，使用 `operator.add` reducer 讓各 agent 的結果自動 append 合併，不互相覆蓋。
+
+### 動態路由流程圖
+
+```
+第一次查詢（無快取）：
+orchestrator → [news_agent, technical_agent, chip_agent, ...] → synthesizer
+                      ↓
+               爬蟲 + 存 Redis（TTL 30 min）
+
+30 分鐘內再次查詢（快取命中）：
+orchestrator → [technical_agent, chip_agent, social_agent, rag_agent] → synthesizer
+                      ↑
+               news_agent 被跳過，synthesizer 直接從 Redis 讀新聞
+```
 
 ---
 

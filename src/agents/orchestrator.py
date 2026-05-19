@@ -10,6 +10,7 @@ from loguru import logger
 from src.agents.state import AgentState
 from src.llm import llm_chat
 from src.tools.sector_data import detect_sector_query, get_sector_symbols
+from src.memory.news_cache import has_fresh_news
 
 # Known Taiwan ticker lookup (expandable)
 TW_COMPANY_TO_CODE: dict[str, str] = {
@@ -108,10 +109,14 @@ async def orchestrator_node(state: AgentState) -> dict:
         if sector_result.get("error"):
             logger.warning(f"Sector lookup error: {sector_result['error']}")
 
-    logger.info(f"Orchestrator → intent={intent}, symbols={all_symbols}")
+    # Check if news cache is still fresh so graph can skip news_agent
+    news_cached = await has_fresh_news()
+
+    logger.info(f"Orchestrator → intent={intent}, symbols={all_symbols}, news_cached={news_cached}")
     return {
         "intent": intent,
         "target_symbols": all_symbols,
         "sector_query": sector_query_str,
         "sector_names": resolved_sector_names,
+        "news_cached": news_cached,
     }

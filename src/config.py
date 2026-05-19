@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     max_news_per_run: int = 30
     news_lookback_hours: int = 24
     session_ttl_seconds: int = 3600
+    news_cache_ttl_seconds: int = 1800  # 30 min news cache
 
     @property
     def postgres_dsn(self) -> str:

@@ -31,14 +31,19 @@ _ALL_DATA_AGENTS = [
 
 
 def _route_after_orchestrator(state: AgentState) -> list[str]:
-    """Fan-out: decide which sub-agents to run based on intent."""
+    """Fan-out: decide which sub-agents to run based on intent and cache state."""
     intent = state.intent
+    # Skip news_agent when Redis cache is still fresh
+    news_agents = [] if state.news_cached else ["news_agent"]
+
     if intent in ("stock_query", "sector_query", "follow_up"):
-        return _ALL_DATA_AGENTS if state.target_symbols else ["news_agent", "social_agent", "rag_agent"]
+        if state.target_symbols:
+            return news_agents + ["technical_agent", "fundamental_agent", "chip_agent", "social_agent", "rag_agent"]
+        return news_agents + ["social_agent", "rag_agent"]
     elif intent == "daily_brief":
-        return ["news_agent", "social_agent", "rag_agent"]
+        return news_agents + ["social_agent", "rag_agent"]
     else:
-        return ["news_agent", "social_agent", "rag_agent"]
+        return news_agents + ["social_agent", "rag_agent"]
 
 
 def build_graph() -> CompiledStateGraph:

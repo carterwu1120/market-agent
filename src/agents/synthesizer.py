@@ -9,6 +9,7 @@ from loguru import logger
 
 from src.agents.state import AgentState
 from src.llm import llm_chat
+from src.memory.news_cache import load_news_cache
 
 SYNTHESIS_SYSTEM = """你是一個專業的財經分析師 AI，負責整合多方數據撰寫投資分析報告。
 
@@ -134,6 +135,14 @@ def _summarize_social(data: list[dict]) -> str:
 async def synthesizer_node(state: AgentState) -> dict:
     logger.info("Synthesizer: generating report")
 
+    # If news_agent was skipped (cache hit), load news from Redis cache now
+    news_articles = state.news_articles
+    if not news_articles and state.news_cached:
+        cached = await load_news_cache()
+        if cached:
+            news_articles = cached
+            logger.info(f"Synthesizer: loaded {len(news_articles)} articles from cache (news_agent was skipped)")
+
     # Build query context description for the prompt
     if state.sector_names:
         sector_label = "、".join(state.sector_names)
@@ -146,8 +155,8 @@ async def synthesizer_node(state: AgentState) -> dict:
     prompt = SYNTHESIS_PROMPT.format(
         user_message=state.user_message,
         query_context=query_context,
-        news_count=len(state.news_articles),
-        news_summary=_summarize_news(state.news_articles),
+        news_count=len(news_articles),
+        news_summary=_summarize_news(news_articles),
         technical_summary=_summarize_technical(state.technical_data),
         fundamental_summary=_summarize_fundamental(state.fundamental_data),
         chip_summary=_summarize_chip(state.chip_data),

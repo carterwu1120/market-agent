@@ -22,6 +22,7 @@ class AgentState:
     target_symbols: list[str] = field(default_factory=list)  # resolved ticker list
     sector_query: str = ""   # e.g. "半導體", "傳產", "油電燃氣業"
     sector_names: list[str] = field(default_factory=list)    # resolved official sector names
+    news_cached: bool = False  # True = Redis has fresh news, orchestrator skips news_agent
 
     # ── Collected data (each agent appends its results) ────────────
     news_articles: Annotated[list[dict], operator.add] = field(default_factory=list)
