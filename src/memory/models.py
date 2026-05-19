@@ -10,6 +10,13 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
 
+# Embedding dimension must match the selected model:
+#   BAAI/bge-m3 (local, default) → 1024
+#   text-embedding-3-small (openai) → 1536
+# Change this constant when switching EMBEDDING_MODEL, then re-run migrations.
+EMBEDDING_DIM: int = 1024
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -62,7 +69,7 @@ class NewsItem(Base):
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     tickers: Mapped[list] = mapped_column(JSONB, default=list)  # ["2330.TW", "TSMC"]
-    embedding: Mapped[Vector] = mapped_column(Vector(1024), nullable=True)  # bge-m3 dim
+    embedding: Mapped[Vector] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)  # bge-m3 dim
 
     __table_args__ = (
         Index("ix_news_embedding", "embedding", postgresql_using="hnsw",
@@ -80,7 +87,7 @@ class KnowledgeChunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
     meta: Mapped[dict] = mapped_column(JSONB, default=dict)
-    embedding: Mapped[Vector] = mapped_column(Vector(1024))
+    embedding: Mapped[Vector] = mapped_column(Vector(EMBEDDING_DIM))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

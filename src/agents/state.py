@@ -31,5 +31,5 @@ class AgentState:
 
     # ── Output ─────────────────────────────────────────────────────
     final_report: str = ""
-    sources: list[str] = field(default_factory=list)  # all cited URLs
+    sources: Annotated[list[str], operator.add] = field(default_factory=list)  # all cited URLs
     error: str = ""

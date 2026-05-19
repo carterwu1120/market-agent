@@ -13,6 +13,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      ollama:
+        condition: service_healthy
     volumes:
       - ./data:/app/data          # knowledge base files
       - ./logs:/app/logs
@@ -64,6 +66,12 @@ services:
       - ollama_models:/root/.ollama
     ports:
       - "11434:11434"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12          # allow up to 2 min for model pull on first boot
+      start_period: 30s
     # Uncomment below if you have NVIDIA GPU:
     # deploy:
     #   resources:

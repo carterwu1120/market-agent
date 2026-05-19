@@ -1,8 +1,10 @@
 """Redis-backed conversation session store.
 
-Short-term memory: keeps the last N messages per Discord channel in Redis
-so the agent can reply with context without hitting PostgreSQL every turn.
-Long-term persistence happens asynchronously via PostgreSQL.
+Uses a Redis List per session for atomic append operations.
+Each element is a JSON-encoded message dict. This avoids the
+read-modify-write race condition of the previous blob approach.
+
+Key: session:<channel_id>:<user_id>  (List)
 """
 
 import json
@@ -27,10 +29,10 @@ def _session_key(channel_id: str, user_id: str) -> str:
 
 async def get_session_messages(channel_id: str, user_id: str) -> list[dict[str, Any]]:
     r = get_redis()
-    raw = await r.get(_session_key(channel_id, user_id))
-    if not raw:
-        return []
-    return json.loads(raw)
+    key = _session_key(channel_id, user_id)
+    # LRANGE returns all elements in insertion order
+    raw_items = await r.lrange(key, 0, -1)
+    return [json.loads(item) for item in raw_items]
 
 
 async def append_message(
@@ -43,11 +45,14 @@ async def append_message(
 ) -> None:
     r = get_redis()
     key = _session_key(channel_id, user_id)
-    messages = await get_session_messages(channel_id, user_id)
-    messages.append({"role": role, "content": content, "meta": meta or {}})
-    # Keep only the last N messages to bound context size
-    messages = messages[-max_messages:]
-    await r.setex(key, settings.session_ttl_seconds, json.dumps(messages, ensure_ascii=False))
+    entry = json.dumps({"role": role, "content": content, "meta": meta or {}}, ensure_ascii=False)
+
+    # Atomic pipeline: RPUSH + LTRIM + EXPIRE
+    async with r.pipeline(transaction=True) as pipe:
+        pipe.rpush(key, entry)
+        pipe.ltrim(key, -max_messages, -1)      # keep only last N messages
+        pipe.expire(key, settings.session_ttl_seconds)
+        await pipe.execute()
 
 
 async def clear_session(channel_id: str, user_id: str) -> None:

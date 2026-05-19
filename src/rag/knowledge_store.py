@@ -68,7 +68,11 @@ async def ingest_document(
 async def ingest_directory(session: AsyncSession, directory: str | Path) -> None:
     """Ingest all .txt and .md files from a directory."""
     path = Path(directory)
-    for f in path.glob("**/*.{txt,md}"):
+    # pathlib does not support brace expansion — iterate each suffix separately
+    files = list(path.rglob("*.md")) + list(path.rglob("*.txt"))
+    if not files and any(path.iterdir()):
+        raise RuntimeError(f"No .md/.txt files found in {path} but directory is non-empty")
+    for f in files:
         content = f.read_text(encoding="utf-8", errors="ignore")
         await ingest_document(session, doc_id=str(f), content=content, meta={"filename": f.name})
 
