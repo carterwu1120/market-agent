@@ -9,6 +9,7 @@ from loguru import logger
 
 from src.agents.state import AgentState
 from src.llm import llm_chat
+from src.tools.sector_data import detect_sector_query, get_sector_symbols
 
 # Known Taiwan ticker lookup (expandable)
 TW_COMPANY_TO_CODE: dict[str, str] = {
@@ -30,12 +31,14 @@ INTENT_SYSTEM = """You are a financial assistant router. Analyze the user messag
 
 Intents:
 - "daily_brief": User wants today's market summary or investment recommendations
-- "stock_query": User is asking about specific stock(s)
+- "stock_query": User is asking about specific stock(s) by name or ticker code
+- "sector_query": User is asking about a sector/industry (e.g. 半導體, 傳產, 石油, 金融)
 - "follow_up": User is asking for more details on the previous response
 - "unknown": Cannot determine
 
 Extract Taiwan stock codes from company names using your knowledge.
 If the user refers to a stock mentioned in the conversation history, include it in symbols.
+For sector_query, do NOT extract individual symbols — just set intent to sector_query.
 
 Return ONLY valid JSON:
 {"intent": "<intent>", "symbols": ["2330.TW", ...], "reasoning": "brief reason"}
@@ -87,5 +90,28 @@ async def orchestrator_node(state: AgentState) -> dict:
     if all_symbols and intent == "daily_brief":
         intent = "stock_query"
 
+    # ── Sector detection ──────────────────────────────────────────────────────
+    # Override intent if sector keyword found and no explicit tickers
+    sector_kw = detect_sector_query(msg)
+    if sector_kw and not all_symbols:
+        intent = "sector_query"
+
+    sector_query_str = ""
+    resolved_sector_names: list[str] = []
+    if intent == "sector_query":
+        query_str = sector_kw or msg
+        sector_result = await get_sector_symbols(query_str, max_symbols=8)
+        all_symbols = sector_result.get("symbols", [])
+        resolved_sector_names = sector_result.get("sector_names", [])
+        sector_query_str = query_str
+        logger.info(f"Sector resolved: {resolved_sector_names} → {len(all_symbols)} symbols")
+        if sector_result.get("error"):
+            logger.warning(f"Sector lookup error: {sector_result['error']}")
+
     logger.info(f"Orchestrator → intent={intent}, symbols={all_symbols}")
-    return {"intent": intent, "target_symbols": all_symbols}
+    return {
+        "intent": intent,
+        "target_symbols": all_symbols,
+        "sector_query": sector_query_str,
+        "sector_names": resolved_sector_names,
+    }

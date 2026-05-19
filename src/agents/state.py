@@ -18,8 +18,10 @@ class AgentState:
     conversation_history: list[dict] = field(default_factory=list)
 
     # ── Routing ────────────────────────────────────────────────────
-    intent: str = ""         # "daily_brief" | "stock_query" | "follow_up" | "unknown"
+    intent: str = ""         # "daily_brief" | "stock_query" | "sector_query" | "follow_up" | "unknown"
     target_symbols: list[str] = field(default_factory=list)  # resolved ticker list
+    sector_query: str = ""   # e.g. "半導體", "傳產", "油電燃氣業"
+    sector_names: list[str] = field(default_factory=list)    # resolved official sector names
 
     # ── Collected data (each agent appends its results) ────────────
     news_articles: Annotated[list[dict], operator.add] = field(default_factory=list)
