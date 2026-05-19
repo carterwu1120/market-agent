@@ -16,7 +16,7 @@ TW_RSS_FEEDS = [
     ("鉅亨網-台股", "https://feeds.cnyes.com/feeds/cat/tw_stock.xml"),
     ("鉅亨網-國際", "https://feeds.cnyes.com/feeds/cat/wd_stock.xml"),
     ("MoneyDJ-頭條", "https://www.moneydj.com/rss/news.aspx"),
-    ("Yahoo財經-台灣", "https://tw.stock.yahoo.com/rss"),
+    ("經濟日報", "https://money.udn.com/rssfeed/news/1001/5591?ch=money"),
 ]
 
 INTERNATIONAL_RSS_FEEDS = [

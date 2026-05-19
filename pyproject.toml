@@ -9,7 +9,7 @@ packages = ["src"]
 name = "market-agent"
 version = "0.1.0"
 description = "LangGraph multi-agent stock market analysis bot"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 dependencies = [
     # LangGraph / LangChain
