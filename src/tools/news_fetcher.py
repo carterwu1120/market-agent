@@ -15,7 +15,7 @@ from src.config import settings
 TW_RSS_FEEDS = [
     ("鉅亨網-台股", "https://feeds.cnyes.com/feeds/cat/tw_stock.xml"),
     ("鉅亨網-國際", "https://feeds.cnyes.com/feeds/cat/wd_stock.xml"),
-    ("工商時報", "https://ctee.com.tw/feed"),
+    ("鉅亨網-台股", "https://cnyes.com/news/rss/tw_stock"),
     ("經濟日報", "https://money.udn.com/rssfeed/news/1001/5591?ch=money"),
 ]
 
