@@ -107,30 +107,42 @@ async def get_goodinfo_chip(symbol: str) -> dict[str, Any]:
 # ── TWSE 融資融券 ──────────────────────────────────────────────────────────────
 
 async def get_margin_trading(symbol: str, query_date: date | None = None) -> dict[str, Any]:
-    """Fetch margin trading (融資融券) from TWSE."""
-    query_date = query_date or date.today()
-    date_str = query_date.strftime("%Y%m%d")
+    """Fetch margin trading (融資融券) from TWSE.
+
+    Falls back up to 5 previous calendar days when today has no data
+    (weekends, holidays, or pre-close requests).
+    """
+    from datetime import timedelta
     code = symbol.replace(".TW", "")
-    url = f"{TWSE_BASE}/rwd/zh/marginTrading/MI_MARGN?date={date_str}&selectType=ALL&response=json"
+    base_date = query_date or date.today()
 
     async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "Mozilla/5.0"}) as client:
-        try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as exc:
-            logger.warning(f"TWSE margin data failed: {exc}")
-            return {"symbol": symbol, "error": str(exc)}
+        for days_back in range(5):
+            target = base_date - timedelta(days=days_back)
+            date_str = target.strftime("%Y%m%d")
+            url = f"{TWSE_BASE}/rwd/zh/marginTrading/MI_MARGN?date={date_str}&selectType=ALL&response=json"
+            try:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception as exc:
+                logger.warning(f"TWSE margin data failed ({date_str}): {exc}")
+                continue
 
-    for row in data.get("data", []):
-        if row[0] == code:
-            return {
-                "symbol": symbol,
-                "date": query_date.isoformat(),
-                "margin_buy_balance": row[6],    # 融資餘額（張）
-                "short_sell_balance": row[12],   # 融券餘額（張）
-                "margin_utilization": row[8],    # 融資使用率
-                "source": f"{TWSE_BASE}/rwd/zh/marginTrading/MI_MARGN",
-            }
+            rows = data.get("data", [])
+            if not rows:
+                continue  # no trading data for this date, try previous day
 
-    return {"symbol": symbol, "date": query_date.isoformat(), "error": "not found"}
+            for row in rows:
+                if row[0] == code:
+                    return {
+                        "symbol": symbol,
+                        "date": target.isoformat(),
+                        "margin_buy_balance": row[6],
+                        "short_sell_balance": row[12],
+                        "margin_utilization": row[8],
+                        "source": f"{TWSE_BASE}/rwd/zh/marginTrading/MI_MARGN",
+                    }
+            break  # date had data but symbol not found — don't keep going back
+
+    return {"symbol": symbol, "date": base_date.isoformat(), "error": "not found"}
