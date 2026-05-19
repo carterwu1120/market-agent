@@ -42,6 +42,8 @@ def main():
     logger.info(f"Starting Market Agent | LLM: {settings.llm_provider}/{settings.llm_model}")
 
     async def _start():
+        from src.memory.database import try_init_db
+        await try_init_db()
         await pull_ollama_model()
         from src.bot.discord_bot import bot
         from src.config import settings

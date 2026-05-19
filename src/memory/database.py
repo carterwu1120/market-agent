@@ -20,3 +20,14 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.execute(__import__("sqlalchemy").text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+
+
+async def try_init_db() -> bool:
+    """Best-effort DB init — returns True on success, False if DB is unavailable."""
+    try:
+        await init_db()
+        logger.info("DB initialized")
+        return True
+    except Exception as exc:
+        logger.warning(f"DB unavailable, skipping init: {exc}")
+        return False

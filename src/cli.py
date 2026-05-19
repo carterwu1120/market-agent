@@ -119,6 +119,16 @@ def main() -> None:
     logger.remove()
     logger.add(sys.stderr, level="WARNING")
 
+    # Auto-init DB tables if PostgreSQL is available
+    async def _init():
+        from src.memory.database import try_init_db
+        ok = await try_init_db()
+        if ok:
+            console.print("[dim]✓ DB connected[/dim]")
+        else:
+            console.print("[dim]⚠ DB offline — memory features disabled[/dim]")
+    asyncio.run(_init())
+
     console.print(Panel(
         f"[bold green]Market Agent CLI[/bold green]\n"
         f"LLM: [cyan]{settings.llm_provider}/{settings.llm_model}[/cyan]\n"
