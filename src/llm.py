@@ -10,11 +10,11 @@ from litellm import acompletion
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_google_vertexai import ChatVertexAI
 
 from src.config import settings
 
 litellm.set_verbose = False
+litellm.suppress_debug_info = True
 
 
 def _litellm_model_string() -> str:
@@ -93,10 +93,9 @@ def get_langchain_llm(temperature: float = 0.3) -> BaseChatModel:
                 temperature=temperature,
             )
         case "vertex":
-            return ChatVertexAI(
+            return ChatGoogleGenerativeAI(
                 model=settings.llm_model,
-                project=settings.google_cloud_project,
-                location=settings.google_cloud_location,
+                google_api_key=None,  # uses ADC (gcloud auth application-default login)
                 temperature=temperature,
             )
         case _:
