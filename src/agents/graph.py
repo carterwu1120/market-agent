@@ -22,6 +22,7 @@ from src.agents.chip_agent import chip_agent_node
 from src.agents.social_agent import social_agent_node
 from src.agents.rag_agent import rag_agent_node
 from src.agents.synthesizer import synthesizer_node
+from src.agents.research_agent import research_agent_node
 
 
 _ALL_DATA_AGENTS = [
@@ -33,6 +34,11 @@ _ALL_DATA_AGENTS = [
 def _route_after_orchestrator(state: AgentState) -> list[str]:
     """Fan-out: decide which sub-agents to run based on intent and cache state."""
     intent = state.intent
+
+    # 複雜開放式問題 → ReAct research_agent（單一路徑，不 fan-out）
+    if intent == "research":
+        return ["research_agent"]
+
     # Skip news_agent when Redis cache is still fresh
     news_agents = [] if state.news_cached else ["news_agent"]
 
@@ -51,6 +57,7 @@ def build_graph() -> CompiledStateGraph:
 
     # Add all nodes
     builder.add_node("orchestrator", orchestrator_node)
+    builder.add_node("research_agent", research_agent_node)
     builder.add_node("news_agent", news_agent_node)
     builder.add_node("technical_agent", technical_agent_node)
     builder.add_node("fundamental_agent", fundamental_agent_node)
@@ -63,13 +70,17 @@ def build_graph() -> CompiledStateGraph:
     builder.set_entry_point("orchestrator")
 
     # Conditional fan-out from orchestrator
+    _ROUTE_TARGETS = _ALL_DATA_AGENTS + ["research_agent"]
     builder.add_conditional_edges(
         "orchestrator",
         _route_after_orchestrator,
-        {node: node for node in _ALL_DATA_AGENTS},
+        {node: node for node in _ROUTE_TARGETS},
     )
 
-    # All sub-agents converge to synthesizer
+    # research_agent goes directly to END (already has final_report)
+    builder.add_edge("research_agent", END)
+
+    # All other sub-agents converge to synthesizer
     for node in _ALL_DATA_AGENTS:
         builder.add_edge(node, "synthesizer")
 

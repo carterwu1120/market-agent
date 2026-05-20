@@ -36,6 +36,8 @@ Intents:
 - "stock_query": User is asking about specific stock(s) by name or ticker code
 - "sector_query": User is asking about an official TWSE industry sector (e.g. 半導體業, 傳產, 石油, 金融)
 - "theme_query": User is asking about a market theme/concept (e.g. 機器人題材, AI概念, 電動車, 軍工, 低軌衛星)
+- "research": User is asking a complex, open-ended or comparative question that requires multi-step reasoning
+  (e.g. 比較兩個產業、找最值得買的股票、哪個類股現在最強、幫我分析要買哪一支)
 - "follow_up": User is asking for more details on the previous response
 - "unknown": Cannot determine
 
@@ -100,8 +102,9 @@ async def orchestrator_node(state: AgentState) -> dict:
         intent = "stock_query"
 
     # ── Sector detection ──────────────────────────────────────────────────────
+    # research intent is handled by ReAct loop — skip rule-based overrides
     sector_kw = detect_sector_query(msg)
-    if sector_kw and not all_symbols and intent not in ("theme_query",):
+    if sector_kw and not all_symbols and intent not in ("theme_query", "research"):
         intent = "sector_query"
 
     sector_query_str = ""
