@@ -37,8 +37,8 @@ Intents:
 - "sector_query": User is asking about an official TWSE industry sector (e.g. 半導體業, 傳產, 石油, 金融)
 - "theme_query": User is asking about a market theme/concept (e.g. 機器人題材, AI概念, 電動車, 軍工, 低軌衛星)
 - "research": User is asking a complex, open-ended or comparative question that requires multi-step reasoning
-  (e.g. 比較兩個產業、找最值得買的股票、哪個類股現在最強、幫我分析要買哪一支)
-- "follow_up": User is asking for more details on the previous response
+  (e.g. 比較兩個產業、找最值得買的股票、哪個類股現在最強、幫我分析要買哪一支、還有其他個股嗎、有沒有更好的選擇、還有什麼可以比較)
+- "follow_up": User is asking for more details about a SPECIFIC stock already mentioned (e.g. 那台積電的技術面如何、聯發科的本益比是多少)
 - "unknown": Cannot determine
 
 Key distinction — sector_query vs theme_query:
@@ -66,11 +66,16 @@ async def orchestrator_node(state: AgentState) -> dict:
     pre_symbols = [f"{c}.TW" for c in bare_codes]
 
     # LLM-based intent classification — include recent history for follow-up context
-    history_messages = [
-        {"role": m["role"], "content": m["content"]}
-        for m in (state.conversation_history or [])[-6:]  # last 3 turns
-        if m.get("role") in ("user", "assistant")
-    ]
+    history_messages = []
+    for m in (state.conversation_history or [])[-6:]:
+        if m.get("role") not in ("user", "assistant"):
+            continue
+        content = m.get("content", "")
+        meta = m.get("meta") or {}
+        symbols = meta.get("symbols", [])
+        if symbols and m["role"] == "assistant":
+            content = f"[分析標的: {', '.join(symbols)}]\n{content}"
+        history_messages.append({"role": m["role"], "content": content})
     try:
         raw = await llm_chat(
             messages=[

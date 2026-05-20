@@ -141,8 +141,25 @@ async def research_agent_node(state: AgentState) -> dict:
     logger.info("ResearchAgent: starting ReAct loop")
 
     llm = get_langchain_llm().bind_tools(_TOOLS)
+
+    # Inject conversation history so LLM can do context-aware research
+    history_messages = []
+    for m in (state.conversation_history or [])[-6:]:
+        if m.get("role") not in ("user", "assistant"):
+            continue
+        content = m.get("content", "")
+        meta = m.get("meta") or {}
+        symbols = meta.get("symbols", [])
+        if symbols and m["role"] == "assistant":
+            content = f"[分析標的: {', '.join(symbols)}]\n{content}"
+        if m["role"] == "user":
+            history_messages.append(HumanMessage(content=content))
+        else:
+            history_messages.append(AIMessage(content=content))
+
     messages = [
         SystemMessage(content=REACT_SYSTEM),
+        *history_messages,
         HumanMessage(content=state.user_message),
     ]
 
@@ -155,7 +172,11 @@ async def research_agent_node(state: AgentState) -> dict:
         # 沒有 tool_calls → LLM 完成推理，輸出最終答案
         if not response.tool_calls:
             logger.info(f"ResearchAgent: done after {iterations} iterations")
-            return {"final_report": _extract_text(response.content), "sources": []}
+            return {
+                "final_report": _extract_text(response.content),
+                "conclusion": _extract_text(response.content)[-600:],
+                "sources": [],
+            }
 
         # 執行 tool calls
         logger.info(f"ResearchAgent iter {iterations}: calling {[tc['name'] for tc in response.tool_calls]}")
@@ -169,4 +190,5 @@ async def research_agent_node(state: AgentState) -> dict:
         *messages,
         HumanMessage(content="根據以上收集到的資料，請直接給出最終分析結論。"),
     ])
-    return {"final_report": _extract_text(final.content), "sources": []}
+    text = _extract_text(final.content)
+    return {"final_report": text, "conclusion": text[-600:], "sources": []}

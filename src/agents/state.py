@@ -36,5 +36,6 @@ class AgentState:
 
     # ── Output ─────────────────────────────────────────────────────
     final_report: str = ""
+    conclusion: str = ""  # structured conclusion paragraph for session storage
     sources: Annotated[list[str], operator.add] = field(default_factory=list)  # all cited URLs
     error: str = ""

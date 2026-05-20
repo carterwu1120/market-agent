@@ -61,6 +61,21 @@ async def _run(message: str) -> None:
                 if isinstance(result, dict)
                 else getattr(result, "sources", [])
             )
+            intent = (
+                result.get("intent", "")
+                if isinstance(result, dict)
+                else getattr(result, "intent", "")
+            )
+            target_symbols = (
+                result.get("target_symbols", [])
+                if isinstance(result, dict)
+                else getattr(result, "target_symbols", [])
+            )
+            conclusion = (
+                result.get("conclusion", "")
+                if isinstance(result, dict)
+                else getattr(result, "conclusion", "")
+            )
         except Exception as exc:
             report = f"⚠️ 錯誤：{exc}"
             sources = []
@@ -72,7 +87,14 @@ async def _run(message: str) -> None:
 
     # Keep session
     SESSION.append({"role": "user", "content": message})
-    SESSION.append({"role": "assistant", "content": report[:400]})
+    SESSION.append({
+        "role": "assistant",
+        "content": conclusion or report[:400],
+        "meta": {
+            "symbols": target_symbols,
+            "intent": intent,
+        },
+    })
 
 
 def _handle_command(cmd: str) -> bool:

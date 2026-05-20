@@ -111,6 +111,9 @@ async def _process_and_reply(
         report = result.get("final_report", "") if isinstance(result, dict) else getattr(result, "final_report", "")
         if not report:
             report = "⚠️ 無法生成報告，請稍後再試。"
+        intent = result.get("intent", "") if isinstance(result, dict) else getattr(result, "intent", "")
+        target_symbols = result.get("target_symbols", []) if isinstance(result, dict) else getattr(result, "target_symbols", [])
+        conclusion = result.get("conclusion", "") if isinstance(result, dict) else getattr(result, "conclusion", "")
     except Exception as exc:
         logger.error(f"Agent pipeline error: {exc}", exc_info=True)
         report = f"⚠️ 系統錯誤：{exc}"
@@ -122,7 +125,11 @@ async def _process_and_reply(
     # Persist to Redis session — best-effort
     try:
         await append_message(channel_id, user_id, "user", user_message)
-        await append_message(channel_id, user_id, "assistant", report[:500])
+        await append_message(
+            channel_id, user_id, "assistant",
+            content=conclusion or report[:500],
+            meta={"symbols": target_symbols, "intent": intent},
+        )
     except Exception as exc:
         logger.warning(f"Redis write failed (session not saved): {exc}")
 
