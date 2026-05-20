@@ -6,12 +6,35 @@ so the synthesizer agent can cite them in the final report.
 
 from __future__ import annotations
 import asyncio
+import json
 from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
 import yfinance as yf
 from loguru import logger
+
+_TECHNICAL_TTL = 1800   # 30 min
+_FUNDAMENTAL_TTL = 86400  # 24 hours
+
+
+async def _redis_get(key: str) -> dict | None:
+    try:
+        from src.memory.session_store import get_redis
+        r = get_redis()
+        raw = await r.get(key)
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
+
+
+async def _redis_set(key: str, value: dict, ttl: int) -> None:
+    try:
+        from src.memory.session_store import get_redis
+        r = get_redis()
+        await r.set(key, json.dumps(value, ensure_ascii=False, default=str), ex=ttl)
+    except Exception:
+        pass
 
 
 def _calc_bias(price: float, ma: float) -> float | None:
@@ -67,6 +90,12 @@ async def get_stock_price(symbol: str) -> dict[str, Any]:
 async def get_technical_indicators(symbol: str, period: str = "6mo") -> dict[str, Any]:
     """Compute MA, RSI, MACD, Bollinger Bands from yfinance OHLCV."""
     ticker_sym = _tw_ticker(symbol)
+    cache_key = f"stock:technical:{ticker_sym}"
+
+    cached = await _redis_get(cache_key)
+    if cached:
+        logger.debug(f"Technical cache hit [{ticker_sym}]")
+        return cached
 
     def _compute():
         import pandas_ta as ta
@@ -103,6 +132,8 @@ async def get_technical_indicators(symbol: str, period: str = "6mo") -> dict[str
 
     try:
         result = await asyncio.to_thread(_compute)
+        if result:
+            await _redis_set(cache_key, result, _TECHNICAL_TTL)
         return result or {"symbol": ticker_sym, "error": "empty data"}
     except Exception as exc:
         logger.warning(f"Technical indicators failed [{ticker_sym}]: {exc}")
@@ -114,6 +145,12 @@ async def get_technical_indicators(symbol: str, period: str = "6mo") -> dict[str
 async def get_fundamental_data(symbol: str) -> dict[str, Any]:
     """Fetch key fundamental ratios from yfinance (covers global + TW ADRs)."""
     ticker_sym = _tw_ticker(symbol)
+    cache_key = f"stock:fundamental:{ticker_sym}"
+
+    cached = await _redis_get(cache_key)
+    if cached:
+        logger.debug(f"Fundamental cache hit [{ticker_sym}]")
+        return cached
 
     def _fetch():
         t = yf.Ticker(ticker_sym)
@@ -142,7 +179,9 @@ async def get_fundamental_data(symbol: str) -> dict[str, Any]:
         }
 
     try:
-        return await asyncio.to_thread(_fetch)
+        result = await asyncio.to_thread(_fetch)
+        await _redis_set(cache_key, result, _FUNDAMENTAL_TTL)
+        return result
     except Exception as exc:
         logger.warning(f"Fundamental data failed [{ticker_sym}]: {exc}")
         return {"symbol": ticker_sym, "error": str(exc)}
