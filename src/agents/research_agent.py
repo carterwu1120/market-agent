@@ -119,6 +119,23 @@ _TOOLS = [sector_lookup, theme_lookup, technical_analysis, fundamental_analysis,
 _tool_node = ToolNode(_TOOLS)
 
 
+def _extract_text(content: Any) -> str:
+    """Normalize LLM response content to plain string.
+    Gemini returns list of content blocks: [{'type': 'text', 'text': '...'}]
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                parts.append(block.get("text", ""))
+            elif isinstance(block, str):
+                parts.append(block)
+        return "\n".join(p for p in parts if p)
+    return str(content)
+
+
 async def research_agent_node(state: AgentState) -> dict:
     """ReAct loop：LLM 自主決定呼叫哪些工具直到得出結論。"""
     logger.info("ResearchAgent: starting ReAct loop")
@@ -138,7 +155,7 @@ async def research_agent_node(state: AgentState) -> dict:
         # 沒有 tool_calls → LLM 完成推理，輸出最終答案
         if not response.tool_calls:
             logger.info(f"ResearchAgent: done after {iterations} iterations")
-            return {"final_report": response.content, "sources": []}
+            return {"final_report": _extract_text(response.content), "sources": []}
 
         # 執行 tool calls
         logger.info(f"ResearchAgent iter {iterations}: calling {[tc['name'] for tc in response.tool_calls]}")
@@ -152,4 +169,4 @@ async def research_agent_node(state: AgentState) -> dict:
         *messages,
         HumanMessage(content="根據以上收集到的資料，請直接給出最終分析結論。"),
     ])
-    return {"final_report": final.content, "sources": []}
+    return {"final_report": _extract_text(final.content), "sources": []}

@@ -54,6 +54,8 @@ async def _run(message: str) -> None:
                 if isinstance(result, dict)
                 else getattr(result, "final_report", "")
             )
+            if isinstance(report, list):
+                report = "\n".join(str(r) for r in report)
             sources = (
                 result.get("sources", [])
                 if isinstance(result, dict)
@@ -117,7 +119,7 @@ def _handle_command(cmd: str) -> bool:
 def main() -> None:
     # Suppress noisy loggers in CLI mode
     logger.remove()
-    logger.add(sys.stderr, level="WARNING")
+    logger.add(sys.stderr, level="INFO")
 
     # Auto-init DB tables if PostgreSQL is available
     async def _init():

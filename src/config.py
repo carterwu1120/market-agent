@@ -6,12 +6,14 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # LLM
-    llm_provider: Literal["ollama", "openai", "gemini", "vllm"] = "ollama"
+    llm_provider: Literal["ollama", "openai", "gemini", "vertex", "vllm"] = "ollama"
     llm_model: str = "llama3.1:8b"
     ollama_base_url: str = "http://localhost:11434"
     vllm_base_url: str = "http://localhost:8000"
     openai_api_key: str = ""
     gemini_api_key: str = ""
+    google_cloud_project: str = ""
+    google_cloud_location: str = "us-central1"
 
     # Embedding
     embedding_provider: Literal["local", "openai"] = "local"

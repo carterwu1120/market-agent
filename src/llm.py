@@ -10,6 +10,7 @@ from litellm import acompletion
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_vertexai import ChatVertexAI
 
 from src.config import settings
 
@@ -25,8 +26,9 @@ def _litellm_model_string() -> str:
             return settings.llm_model
         case "gemini":
             return f"gemini/{settings.llm_model}"
+        case "vertex":
+            return f"vertex_ai/{settings.llm_model}"
         case "vllm":
-            # vLLM exposes an OpenAI-compatible endpoint
             return f"openai/{settings.llm_model}"
         case _:
             raise ValueError(f"Unknown LLM provider: {settings.llm_provider}")
@@ -40,11 +42,14 @@ def _litellm_kwargs() -> dict[str, Any]:
             kwargs["api_base"] = settings.ollama_base_url
         case "vllm":
             kwargs["api_base"] = settings.vllm_base_url
-            kwargs["api_key"] = "dummy"  # vLLM doesn't validate keys
+            kwargs["api_key"] = "dummy"
         case "openai":
             kwargs["api_key"] = settings.openai_api_key
         case "gemini":
             kwargs["api_key"] = settings.gemini_api_key
+        case "vertex":
+            kwargs["vertex_project"] = settings.google_cloud_project
+            kwargs["vertex_location"] = settings.google_cloud_location
     return kwargs
 
 
@@ -85,6 +90,13 @@ def get_langchain_llm(temperature: float = 0.3) -> BaseChatModel:
             return ChatGoogleGenerativeAI(
                 model=settings.llm_model,
                 google_api_key=settings.gemini_api_key,
+                temperature=temperature,
+            )
+        case "vertex":
+            return ChatVertexAI(
+                model=settings.llm_model,
+                project=settings.google_cloud_project,
+                location=settings.google_cloud_location,
                 temperature=temperature,
             )
         case _:

@@ -11,6 +11,7 @@ Parallel branches use Send for fan-out. All branches converge at synthesizer.
 """
 
 from langgraph.graph import StateGraph, END
+from loguru import logger
 from langgraph.graph.state import CompiledStateGraph
 
 from src.agents.state import AgentState
@@ -107,6 +108,7 @@ async def run_agent(
     conversation_history: list[dict] | None = None,
 ) -> AgentState:
     """Entry point called by the Discord bot."""
+    import time
     graph = get_graph()
     initial_state = AgentState(
         user_message=user_message,
@@ -114,5 +116,8 @@ async def run_agent(
         channel_id=channel_id,
         conversation_history=conversation_history or [],
     )
+    t0 = time.perf_counter()
     result = await graph.ainvoke(initial_state)
+    elapsed = time.perf_counter() - t0
+    logger.info(f"run_agent completed in {elapsed:.1f}s")
     return result
