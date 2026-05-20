@@ -10,6 +10,7 @@
 
 - 📰 **即時新聞** — RSS（Bloomberg、FT、經濟日報、MoneyUDN）+ NewsAPI + GNews 多源整合，任一來源失敗不影響其他；Redis 快取 30 分鐘，重複查詢自動跳過爬蟲
 - 🏭 **類股查詢** — 輸入「半導體」「傳產」「金融股」等關鍵字，自動從 TWSE 抓取該產業所有成份股（1077 檔 / 32 產業），fallback 至代表股清單
+- 🎯 **概念股查詢** — 輸入「機器人」「元宇宙」「低軌衛星」「AI人工智慧」等主題，從 **CMoney 概念股分類**（159 個概念，涵蓋所有熱門題材）直接取得結構化個股清單；CMoney 無匹配時 fallback 至新聞關鍵字提取（鉅亨 + UDN）
 - 📈 **技術面分析** — RSI、MACD、MA20、EMA12（yfinance + pandas-ta）✅
 - 📊 **基本面分析** — PE、PB、EPS、ROE、分析師評等（Yahoo Finance）✅
 - 🧩 **籌碼面分析** — 三大法人買賣超（TWSE 公開 API）✅ | 融資融券 ⚠️ API 不穩定
@@ -228,8 +229,11 @@ market-agent/
     ├── tools/                   # 各數據源工具函數
     │   ├── news_fetcher.py      # RSS + NewsAPI
     │   ├── stock_data.py        # yfinance（價格、技術、基本面）
-    │   ├── chip_data.py         # TWSE API + goodinfo scraper
-    │   └── social_signal.py     # PTT scraper
+    │   ├── chip_data.py         # TWSE API（三大法人、融資融券）
+    │   ├── social_signal.py     # PTT scraper
+    │   ├── sector_data.py       # TWSE ISIN 類股查詢（官方產業分類）
+    │   ├── cmoney_concept.py    # CMoney 概念股爬蟲（159 個主題分類）
+    │   └── theme_search.py      # 主題搜尋（CMoney 優先 + 新聞 fallback）
     ├── memory/
     │   ├── models.py            # SQLAlchemy ORM（含 pgvector）
     │   ├── database.py          # async engine + session factory

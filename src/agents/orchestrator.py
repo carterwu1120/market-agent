@@ -40,8 +40,10 @@ Intents:
 - "unknown": Cannot determine
 
 Key distinction — sector_query vs theme_query:
-- sector_query: maps to official TWSE industry classification (半導體業, 金融保險業, 鋼鐵工業...)
-- theme_query: market narrative/concept not in official classification (機器人, AI概念, 電動車, 5G...)
+- sector_query: maps to official TWSE industry classification (半導體業, 金融保險業, 鋼鐵工業, 航運業, 生技醫療業, 食品工業, 建材營造業, 光電業, 綠能環保, 油電燃氣業...)
+  Keywords: 半導體, 金融, 銀行, 航運, 海運, 鋼鐵, 傳產, 石化, 石油, 電力, 生技, 醫療, 食品, 建設, 建材, 營造, 光電, 太陽能, 綠能, 紡織, 水泥
+- theme_query: market narrative/concept NOT in official TWSE classification (機器人, AI概念, 電動車, 元宇宙, 低軌衛星, 比特幣, 軍工, 5G, IoT, AR/VR, 自動駕駛...)
+  Rule of thumb: if it sounds like a tech trend or buzzword, it's theme_query; if it's an industry that has existed for decades, it's sector_query
 
 Extract Taiwan stock codes from company names using your knowledge.
 If the user refers to a stock mentioned in the conversation history, include it in symbols.

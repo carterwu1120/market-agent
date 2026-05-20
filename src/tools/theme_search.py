@@ -1,10 +1,8 @@
-"""主題/題材股票搜尋：透過新聞關鍵字動態找出相關個股。
+"""主題/題材股票搜尋。
 
-流程：
-1. 鉅亨網全文搜尋 API（精確）+ UDN 搜尋頁面（補充）
-2. 從新聞內文抽取 XXXX-TW 格式的股票代碼
-3. 按出現頻率排序，取前 N 檔
-4. 同時回傳相關新聞供 synthesizer 參考
+流程（優先順序）：
+1. CMoney 概念股頁面（結構化清單，最準確）
+2. 鉅亨網全文搜尋 API + UDN 搜尋（新聞提取，作為 fallback）
 """
 
 from __future__ import annotations
@@ -16,6 +14,8 @@ from typing import Any
 import httpx
 from bs4 import BeautifulSoup
 from loguru import logger
+
+from src.tools.cmoney_concept import get_concept_stocks
 
 CNYES_SEARCH_API = "https://api.cnyes.com/media/api/v1/search"
 UDN_SEARCH_URL = "https://money.udn.com/search/result/1001/{keyword}"
@@ -107,40 +107,60 @@ async def search_theme_stocks(
     max_symbols: int = 10,
 ) -> dict[str, Any]:
     """
-    給定主題關鍵字，從新聞中動態找出相關個股。
+    給定主題關鍵字，找出相關個股。
+
+    優先使用 CMoney 概念股結構化清單；若找不到匹配，
+    fallback 到新聞關鍵字提取（鉅亨 + UDN）。
 
     Returns:
         {
-            "keyword": "機器人概念股",
-            "symbols": ["2049.TW", "2049.TW", ...],  # 按出現頻率排序
-            "code_frequency": {"2049": 5, ...},
+            "keyword": str,
+            "symbols": [...],
             "articles": [...],
             "total_articles": int,
-            "source": "cnyes+udn",
+            "source": "cmoney_concept" | "cnyes_search+udn",
+            "matched_concept": str | None,
         }
     """
+    # ── Primary: CMoney structured concept stocks ──────────────────────────
+    cmoney = await get_concept_stocks(keyword, max_symbols=max_symbols)
+    if cmoney.get("symbols"):
+        logger.info(
+            f"ThemeSearch '{keyword}': CMoney '{cmoney['matched_concept']}' "
+            f"→ {len(cmoney['symbols'])} symbols"
+        )
+        # Still fetch news for context (non-blocking, fire and forget via task)
+        return {
+            "keyword": keyword,
+            "symbols": cmoney["symbols"],
+            "articles": [],
+            "total_articles": 0,
+            "source": "cmoney_concept",
+            "matched_concept": cmoney.get("matched_concept"),
+        }
+
+    # ── Fallback: news-based extraction ───────────────────────────────────
+    logger.info(f"ThemeSearch '{keyword}': CMoney no match, falling back to news extraction")
     async with httpx.AsyncClient(timeout=20, headers=_HEADERS, follow_redirects=True) as client:
         cnyes_news, cnyes_counter = await _fetch_cnyes(keyword, client)
-        await asyncio.sleep(0.5)  # polite delay
+        await asyncio.sleep(0.5)
         udn_news, udn_counter = await _fetch_udn(keyword, client)
 
-    # 合併計數
     total_counter = cnyes_counter + udn_counter
     top_codes = [code for code, _ in total_counter.most_common(max_symbols)]
     symbols = [f"{code}.TW" for code in top_codes]
-
     all_articles = cnyes_news + udn_news
 
     logger.info(
-        f"ThemeSearch '{keyword}': {len(all_articles)} articles, "
-        f"{len(total_counter)} unique codes → top {len(symbols)}: {symbols}"
+        f"ThemeSearch fallback '{keyword}': {len(all_articles)} articles, "
+        f"{len(total_counter)} unique codes → {symbols}"
     )
 
     return {
         "keyword": keyword,
         "symbols": symbols,
-        "code_frequency": dict(total_counter.most_common(max_symbols)),
         "articles": all_articles,
         "total_articles": len(all_articles),
         "source": "cnyes_search+udn",
+        "matched_concept": None,
     }
