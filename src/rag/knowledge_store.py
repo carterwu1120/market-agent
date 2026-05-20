@@ -91,9 +91,9 @@ async def search_knowledge(
     result = await session.execute(
         text("""
             SELECT id, doc_id, content, meta,
-                   1 - (embedding <=> :embedding::vector) AS score
+                   1 - (embedding <=> CAST(:embedding AS vector)) AS score
             FROM knowledge_chunks
-            ORDER BY embedding <=> :embedding::vector
+            ORDER BY embedding <=> CAST(:embedding AS vector)
             LIMIT :k
         """),
         {"embedding": str(query_emb), "k": top_k},
@@ -119,10 +119,10 @@ async def search_news(
     result = await session.execute(
         text("""
             SELECT id, title, content, url, source, published_at,
-                   1 - (embedding <=> :embedding::vector) AS score
+                   1 - (embedding <=> CAST(:embedding AS vector)) AS score
             FROM news_items
             WHERE embedding IS NOT NULL
-            ORDER BY embedding <=> :embedding::vector
+            ORDER BY embedding <=> CAST(:embedding AS vector)
             LIMIT :k
         """),
         {"embedding": str(query_emb), "k": top_k},

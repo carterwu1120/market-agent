@@ -93,9 +93,11 @@ def get_langchain_llm(temperature: float = 0.3) -> BaseChatModel:
                 temperature=temperature,
             )
         case "vertex":
+            import google.auth
+            credentials, _ = google.auth.default()
             return ChatGoogleGenerativeAI(
                 model=settings.llm_model,
-                google_api_key=None,  # uses ADC (gcloud auth application-default login)
+                credentials=credentials,
                 temperature=temperature,
             )
         case _:

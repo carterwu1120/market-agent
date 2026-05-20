@@ -21,8 +21,6 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.rule import Rule
-from rich.spinner import Spinner
-from rich import print as rprint
 
 from src.agents.graph import run_agent
 from src.config import settings
@@ -79,13 +77,15 @@ async def _run(message: str) -> None:
         except Exception as exc:
             report = f"⚠️ 錯誤：{exc}"
             sources = []
+            intent = ""
+            target_symbols = []
+            conclusion = ""
 
     _print_report(report or "⚠️ 無法生成報告")
 
     if sources:
         console.print(f"[dim]來源數量：{len(set(sources))} 筆[/dim]")
 
-    # Keep session
     SESSION.append({"role": "user", "content": message})
     SESSION.append({
         "role": "assistant",
@@ -97,7 +97,7 @@ async def _run(message: str) -> None:
     })
 
 
-def _handle_command(cmd: str) -> bool:
+async def _handle_command_async(cmd: str) -> bool:
     """Handle slash commands. Returns True if handled, False if not a command."""
     parts = cmd.strip().split(maxsplit=1)
     directive = parts[0].lower()
@@ -112,7 +112,7 @@ def _handle_command(cmd: str) -> bool:
         return True
 
     if directive == "/brief":
-        asyncio.run(_run("請給我今日市場每日簡報和投資建議"))
+        await _run("請給我今日市場每日簡報和投資建議")
         return True
 
     if directive == "/stock":
@@ -120,7 +120,7 @@ def _handle_command(cmd: str) -> bool:
         if not symbols:
             console.print("[red]用法: /stock 2330 2454[/red]")
             return True
-        asyncio.run(_run(f"請分析以下股票：{symbols}"))
+        await _run(f"請分析以下股票：{symbols}")
         return True
 
     if directive == "/help":
@@ -138,20 +138,14 @@ def _handle_command(cmd: str) -> bool:
     return False
 
 
-def main() -> None:
-    # Suppress noisy loggers in CLI mode
-    logger.remove()
-    logger.add(sys.stderr, level="INFO")
-
+async def _main_async() -> None:
     # Auto-init DB tables if PostgreSQL is available
-    async def _init():
-        from src.memory.database import try_init_db
-        ok = await try_init_db()
-        if ok:
-            console.print("[dim]✓ DB connected[/dim]")
-        else:
-            console.print("[dim]⚠ DB offline — memory features disabled[/dim]")
-    asyncio.run(_init())
+    from src.memory.database import try_init_db
+    ok = await try_init_db()
+    if ok:
+        console.print("[dim]✓ DB connected[/dim]")
+    else:
+        console.print("[dim]⚠ DB offline — memory features disabled[/dim]")
 
     console.print(Panel(
         f"[bold green]Market Agent CLI[/bold green]\n"
@@ -162,7 +156,9 @@ def main() -> None:
 
     while True:
         try:
-            user_input = Prompt.ask("\n[bold blue]>[/bold blue]").strip()
+            user_input = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: Prompt.ask("\n[bold blue]>[/bold blue]").strip()
+            )
         except (EOFError, KeyboardInterrupt):
             console.print("\n[bold]Bye![/bold]")
             break
@@ -171,10 +167,16 @@ def main() -> None:
             continue
 
         if user_input.startswith("/"):
-            if not _handle_command(user_input):
+            if not await _handle_command_async(user_input):
                 console.print(f"[red]未知指令：{user_input}，輸入 /help 查看可用指令[/red]")
         else:
-            asyncio.run(_run(user_input))
+            await _run(user_input)
+
+
+def main() -> None:
+    logger.remove()
+    logger.add(sys.stderr, level="INFO")
+    asyncio.run(_main_async())
 
 
 if __name__ == "__main__":
