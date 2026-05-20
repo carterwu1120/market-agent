@@ -32,6 +32,7 @@ class AgentState:
     chip_data: Annotated[list[dict], operator.add] = field(default_factory=list)
     social_signals: Annotated[list[dict], operator.add] = field(default_factory=list)
     rag_context: Annotated[list[dict], operator.add] = field(default_factory=list)
+    insight_data: Annotated[list[dict], operator.add] = field(default_factory=list)  # 法說會/技術新聞
 
     # ── Output ─────────────────────────────────────────────────────
     final_report: str = ""
