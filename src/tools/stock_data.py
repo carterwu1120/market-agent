@@ -14,6 +14,13 @@ import yfinance as yf
 from loguru import logger
 
 
+def _calc_bias(price: float, ma: float) -> float | None:
+    """乖離率 = (現價 - MA) / MA × 100%"""
+    if not ma or pd.isna(ma) or ma == 0:
+        return None
+    return round((price - ma) / ma * 100, 2)
+
+
 def _tw_ticker(symbol: str) -> str:
     """Normalize Taiwan stock symbol: '2330' → '2330.TW'"""
     if "." not in symbol and symbol.isdigit():
@@ -89,6 +96,8 @@ async def get_technical_indicators(symbol: str, period: str = "6mo") -> dict[str
             "sma_20": round(float(latest.get("SMA_20", float("nan"))), 2),
             "sma_60": round(float(latest.get("SMA_60", float("nan"))), 2),
             "ema_12": round(float(latest.get("EMA_12", float("nan"))), 2),
+            "bias_20": _calc_bias(float(latest["Close"]), float(latest.get("SMA_20", float("nan")))),
+            "bias_60": _calc_bias(float(latest["Close"]), float(latest.get("SMA_60", float("nan")))),
             "source": f"https://finance.yahoo.com/quote/{ticker_sym}/history/",
         }
 
