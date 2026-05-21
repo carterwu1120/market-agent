@@ -11,15 +11,15 @@
 - 📰 **即時新聞** — RSS（Bloomberg、FT、經濟日報、MoneyUDN）+ NewsAPI + GNews 多源整合，任一來源失敗不影響其他；Redis 快取 30 分鐘，重複查詢自動跳過爬蟲
 - 🏭 **類股查詢** — 輸入「半導體」「傳產」「金融股」等關鍵字，自動從 TWSE 抓取該產業所有成份股（1077 檔 / 32 產業），fallback 至代表股清單
 - 🎯 **概念股查詢** — 輸入「機器人」「元宇宙」「低軌衛星」「AI人工智慧」等主題，從 **CMoney 概念股分類**（159 個概念，涵蓋所有熱門題材）直接取得結構化個股清單；CMoney 無匹配時 fallback 至新聞關鍵字提取（鉅亨 + UDN）
-- 📈 **技術面分析** — RSI、MACD、MA20、EMA12（yfinance + pandas-ta）✅
-- 📊 **基本面分析** — PE、PB、EPS、ROE、分析師評等（Yahoo Finance）✅
+- 📈 **技術面分析** — RSI、MACD、MA20/60、EMA12、乖離率、布林帶（yfinance + pandas-ta）；Redis 快取 30 分鐘，避免重複計算 ✅
+- 📊 **基本面分析** — PE、PB、EPS、ROE、分析師評等（Yahoo Finance）；Redis 快取 24 小時 ✅
 - 🧩 **籌碼面分析** — 三大法人買賣超（TWSE 公開 API）✅ | 融資融券 ⚠️ API 不穩定
 - 💬 **社群訊號** — PTT Stock 板關鍵字監控（大單、訂單、法說等）
 - 🧠 **RAG 知識庫** — pgvector 向量搜尋，自訂技術分析知識（需 Docker 啟動 DB）
-- 💾 **對話記憶** — Redis session + PostgreSQL 長期記憶（需 Docker 啟動 DB）
-- 🔍 **ReAct 研究模式** — 複雜/比較型問題（「比較半導體和航運哪個強」「找最值得買的機器人股」）自動進入 ReAct loop，LLM 自主決定呼叫哪些工具、呼叫幾次，直到得出結論
+- 💾 **結構化對話記憶** — Redis session（短期）+ PostgreSQL（長期）；每輪回覆儲存 `conclusion`（摘要段落）、`symbols`（分析標的）、`intent`，下一輪查詢自動繼承標的，支援「那聯發科呢？」「還有其他嗎？」等 follow-up
+- 🔍 **ReAct 研究模式** — 複雜/比較型問題（「比較半導體和航運哪個強」「找最值得買的機器人股」）自動進入 ReAct loop，LLM 自主決定呼叫哪些工具、呼叫幾次，直到得出結論；注入對話歷史，支援跨輪比較
 - 📣 **法說會與技術新聞** — 鉅亨網個股搜尋，優先抓法說會、技術突破、產品相關報導，作為「獨家技術亮點」段落的唯一來源
-- 🤖 **LLM 可切換** — Ollama（本地）/ OpenAI / Gemini / vLLM，改 `.env` 即可
+- 🤖 **LLM 可切換** — Ollama（本地）/ OpenAI / Gemini / Vertex AI / vLLM，改 `.env` 即可
 
 ---
 
@@ -210,6 +210,26 @@ docker compose exec app python scripts/init_knowledge_base.py
 
 ---
 
+## 本地 CLI 測試（不需要 Discord）
+
+不想設定 Discord Bot 時，可直接用 CLI 測試完整 agent pipeline：
+
+```bash
+python -m src.cli
+```
+
+| 指令 | 說明 |
+|------|------|
+| `/brief` | 今日市場摘要 |
+| `/stock 2330 2454` | 分析指定股票 |
+| `/clear` | 清除當前 session |
+| `/help` | 顯示說明 |
+| 直接輸入問題 | 自由對話（支援 follow-up） |
+
+> CLI 與 Discord Bot 使用同一套 `run_agent` pipeline，行為完全一致。DB 服務（PostgreSQL、Redis）需在 Docker 中運行；若未啟動，記憶與 RAG 功能自動降級，基本查詢仍可使用。
+
+---
+
 ## 切換 LLM
 
 只需修改 `.env`，不需改任何程式碼：
@@ -224,10 +244,17 @@ LLM_PROVIDER=openai
 LLM_MODEL=gpt-4o-mini
 OPENAI_API_KEY=sk-...
 
-# Gemini
+# Gemini（Developer API）
 LLM_PROVIDER=gemini
-LLM_MODEL=gemini-1.5-flash
+LLM_MODEL=gemini-2.0-flash
 GEMINI_API_KEY=...
+
+# Vertex AI（GCP Application Default Credentials）
+LLM_PROVIDER=vertex
+LLM_MODEL=gemini-2.5-flash
+GOOGLE_CLOUD_PROJECT=your-project-id
+GOOGLE_CLOUD_LOCATION=us-central1
+# 需先執行：gcloud auth application-default login
 
 # vLLM（本地 OpenAI 相容）
 LLM_PROVIDER=vllm
