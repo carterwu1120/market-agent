@@ -7,6 +7,9 @@ venv/
 dist/
 build/
 logs/
+data/knowledge_base/*.txt
+data/knowledge_base/*.md
+!data/knowledge_base/README.md
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
