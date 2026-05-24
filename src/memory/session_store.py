@@ -1,10 +1,12 @@
 """Redis-backed conversation session store.
 
-Uses a Redis List per session for atomic append operations.
+Uses a Redis List per channel for atomic append operations.
 Each element is a JSON-encoded message dict. This avoids the
 read-modify-write race condition of the previous blob approach.
 
-Key: session:<channel_id>:<user_id>  (List)
+Key: session:<channel_id>  (List, shared across all users in the channel)
+Messages include a [username] prefix so the LLM can distinguish speakers
+and decide whether a follow-up refers to a previous user's topic.
 """
 
 import json
@@ -23,15 +25,13 @@ def get_redis() -> aioredis.Redis:
     return _redis
 
 
-def _session_key(channel_id: str, user_id: str) -> str:
-    return f"session:{channel_id}:{user_id}"
+def _session_key(channel_id: str) -> str:
+    return f"session:{channel_id}"
 
 
-async def get_session_messages(channel_id: str, user_id: str) -> list[dict[str, Any]]:
+async def get_session_messages(channel_id: str, user_id: str = "") -> list[dict[str, Any]]:
     r = get_redis()
-    key = _session_key(channel_id, user_id)
-    # LRANGE returns all elements in insertion order
-    raw_items = await r.lrange(key, 0, -1)
+    raw_items = await r.lrange(_session_key(channel_id), 0, -1)
     return [json.loads(item) for item in raw_items]
 
 
@@ -42,19 +42,21 @@ async def append_message(
     content: str,
     meta: dict | None = None,
     max_messages: int = 20,
+    username: str = "",
 ) -> None:
     r = get_redis()
-    key = _session_key(channel_id, user_id)
-    entry = json.dumps({"role": role, "content": content, "meta": meta or {}}, ensure_ascii=False)
+    key = _session_key(channel_id)
+    # Prefix user messages with [username] so LLM can distinguish speakers
+    stored_content = f"[{username}]: {content}" if role == "user" and username else content
+    entry = json.dumps({"role": role, "content": stored_content, "meta": meta or {}}, ensure_ascii=False)
 
-    # Atomic pipeline: RPUSH + LTRIM + EXPIRE
     async with r.pipeline(transaction=True) as pipe:
         pipe.rpush(key, entry)
-        pipe.ltrim(key, -max_messages, -1)      # keep only last N messages
+        pipe.ltrim(key, -max_messages, -1)
         pipe.expire(key, settings.session_ttl_seconds)
         await pipe.execute()
 
 
-async def clear_session(channel_id: str, user_id: str) -> None:
+async def clear_session(channel_id: str, user_id: str = "") -> None:
     r = get_redis()
-    await r.delete(_session_key(channel_id, user_id))
+    await r.delete(_session_key(channel_id))

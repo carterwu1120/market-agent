@@ -126,7 +126,7 @@ async def _process_and_reply(
 
     # Persist to Redis session — best-effort
     try:
-        await append_message(channel_id, user_id, "user", user_message)
+        await append_message(channel_id, user_id, "user", user_message, username=username)
         await append_message(
             channel_id, user_id, "assistant",
             content=conclusion or report[:500],
