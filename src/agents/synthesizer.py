@@ -235,22 +235,27 @@ async def synthesizer_node(state: AgentState) -> dict:
         query_context = "每日市場摘要"
 
     now = _tw_now()
-    prompt = SYNTHESIS_PROMPT.format(
-        today=now.strftime("%Y-%m-%d %A"),
-        is_trading_day="是" if _is_trading_day(now) else "否（週末或假日，股價為最近交易日收盤價）",
-        user_message=state.user_message,
-        query_context=query_context,
-        news_count=len(news_articles),
-        news_summary=_summarize_news(news_articles, symbols=state.target_symbols),
-        technical_summary=_summarize_technical(state.technical_data),
-        fundamental_summary=_summarize_fundamental(state.fundamental_data),
-        chip_summary=_summarize_chip(state.chip_data),
-        insight_summary=_summarize_insights(state.insight_data),
-        social_summary=_summarize_social(state.social_signals),
-        rag_context="\n".join(r.get("content", "") for r in state.rag_context) or "無補充資料",
-    )
+    # Escape braces in dynamic content to prevent .format() KeyError
+    def _safe(text: str) -> str:
+        return text.replace("{", "{{").replace("}", "}}")
+
+    rag_text = "\n".join(r.get("content", "") for r in state.rag_context) or "無補充資料"
 
     try:
+        prompt = SYNTHESIS_PROMPT.format(
+            today=now.strftime("%Y-%m-%d %A"),
+            is_trading_day="是" if _is_trading_day(now) else "否（週末或假日，股價為最近交易日收盤價）",
+            user_message=_safe(state.user_message),
+            query_context=query_context,
+            news_count=len(news_articles),
+            news_summary=_safe(_summarize_news(news_articles, symbols=state.target_symbols)),
+            technical_summary=_summarize_technical(state.technical_data),
+            fundamental_summary=_summarize_fundamental(state.fundamental_data),
+            chip_summary=_summarize_chip(state.chip_data),
+            insight_summary=_safe(_summarize_insights(state.insight_data)),
+            social_summary=_safe(_summarize_social(state.social_signals)),
+            rag_context=_safe(rag_text),
+        )
         report = await llm_chat(
             messages=[
                 {"role": "system", "content": SYNTHESIS_SYSTEM},

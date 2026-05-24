@@ -113,6 +113,9 @@ async def _process_and_reply(
         logger.warning(f"Redis read failed, proceeding with empty history: {exc}")
         history = []
 
+    intent = ""
+    target_symbols = []
+    conclusion = ""
     try:
         result = await run_agent(
             user_message=user_message,
