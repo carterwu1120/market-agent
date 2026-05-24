@@ -74,6 +74,11 @@ class MarketAgentBot(commands.Bot):
 bot = MarketAgentBot()
 
 
+def _is_allowed_channel(channel_id: str) -> bool:
+    allowed = settings.allowed_channels
+    return not allowed or channel_id in allowed
+
+
 async def _process_and_reply(
     interaction_or_message,
     user_message: str,
@@ -85,6 +90,9 @@ async def _process_and_reply(
         user_id = str(ctx.user.id)
         username = str(ctx.user)
         channel_id = str(ctx.channel_id)
+        if not _is_allowed_channel(channel_id):
+            await ctx.response.send_message("❌ 此頻道不開放使用，請前往指定頻道。", ephemeral=True)
+            return
         await ctx.response.defer(thinking=True)
         async def send(text: str):
             await ctx.followup.send(text)
@@ -93,6 +101,8 @@ async def _process_and_reply(
         user_id = str(msg.author.id)
         username = str(msg.author)
         channel_id = str(msg.channel.id)
+        if not _is_allowed_channel(channel_id):
+            return  # silently ignore in non-slash context
         async def send(text: str):
             await msg.channel.send(text)
 

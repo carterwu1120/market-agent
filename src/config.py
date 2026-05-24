@@ -29,6 +29,16 @@ class Settings(BaseSettings):
     schedule_enabled: bool = True
     schedule_user_id: str = "0"
 
+    # Channel allowlist — comma-separated channel IDs bot will respond in
+    # If empty, bot responds everywhere
+    allowed_channel_ids: str = ""
+
+    @property
+    def allowed_channels(self) -> set[str]:
+        if not self.allowed_channel_ids:
+            return set()
+        return {c.strip() for c in self.allowed_channel_ids.split(",") if c.strip()}
+
     # PostgreSQL
     postgres_host: str = "localhost"
     postgres_port: int = 5432
