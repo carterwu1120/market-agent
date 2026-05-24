@@ -206,6 +206,7 @@ async def cmd_help(interaction: discord.Interaction):
 
 @bot.event
 async def on_message(message: discord.Message):
+    logger.debug(f"on_message: author={message.author} mentions={message.mentions} content={message.content[:50]!r}")
     if message.author.bot:
         return
     # Ignore messages that are slash commands

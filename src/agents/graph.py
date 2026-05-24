@@ -117,7 +117,41 @@ async def run_agent(
         conversation_history=conversation_history or [],
     )
     t0 = time.perf_counter()
-    result = await graph.ainvoke(initial_state)
+    try:
+        result = await graph.ainvoke(initial_state)
+    except Exception as exc:
+        elapsed = time.perf_counter() - t0
+        logger.error(f"run_agent failed after {elapsed:.1f}s: {exc}", exc_info=True)
+        # Return a minimal state with a user-friendly error embedded
+        stage = _infer_failed_stage(str(exc))
+        initial_state.final_report = (
+            f"⚠️ 分析流程在「{stage}」階段發生錯誤，請稍後再試。\n"
+            f"（如持續發生請聯繫管理員）"
+        )
+        initial_state.error = str(exc)
+        return initial_state
     elapsed = time.perf_counter() - t0
     logger.info(f"run_agent completed in {elapsed:.1f}s")
     return result
+
+
+def _infer_failed_stage(error_msg: str) -> str:
+    """Map common error patterns to a human-readable pipeline stage name."""
+    msg = error_msg.lower()
+    if "synthesizer" in msg or "llm" in msg or "litellm" in msg:
+        return "報告生成"
+    if "technical" in msg or "price" in msg or "yahoo" in msg:
+        return "技術面數據擷取"
+    if "fundamental" in msg:
+        return "基本面數據擷取"
+    if "chip" in msg or "twse" in msg:
+        return "籌碼面數據擷取"
+    if "news" in msg or "rss" in msg:
+        return "新聞擷取"
+    if "rag" in msg or "embedding" in msg or "pgvector" in msg:
+        return "知識庫查詢"
+    if "orchestrator" in msg or "intent" in msg:
+        return "意圖分析"
+    if "redis" in msg:
+        return "快取讀寫"
+    return "資料處理"

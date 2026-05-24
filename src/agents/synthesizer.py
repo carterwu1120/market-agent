@@ -107,7 +107,9 @@ def _summarize_news(news: list[dict], symbols: list[str] | None = None, max_item
     lines = []
     for n in filtered[:max_items]:
         pub = n.get("published_at") or n.get("publishedAt") or ""
-        date_str = f" ({pub[:10]})" if pub else ""
+        if hasattr(pub, "strftime"):
+            pub = pub.strftime("%Y-%m-%d")
+        date_str = f" ({str(pub)[:10]})" if pub else ""
         lines.append(f"- [{n.get('source_name', '')}]{date_str} {n.get('title', '')} | {n.get('source_url', '')}")
     return "\n".join(lines)
 
