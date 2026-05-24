@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     discord_bot_token: str = ""
     discord_guild_id: str = ""
 
+    # Scheduler
+    schedule_report_channel_id: str = ""
+    schedule_timezone: str = "Asia/Taipei"
+    schedule_enabled: bool = True
+    schedule_user_id: str = "0"
+
     # PostgreSQL
     postgres_host: str = "localhost"
     postgres_port: int = 5432

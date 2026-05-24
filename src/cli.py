@@ -4,11 +4,12 @@ Usage:
     python -m src.cli
 
 Commands:
-    /brief          — Daily market brief
-    /stock 2330     — Analyze specific stock(s)
-    /clear          — Clear session memory
-    /quit           — Exit
-    <free text>     — Ask anything
+    /brief               — Daily market brief
+    /stock 2330          — Analyze specific stock(s)
+    /schedule pre|mid|post — Trigger scheduled report (盤前/盤中/收盤後)
+    /clear               — Clear session memory
+    /quit                — Exit
+    <free text>          — Ask anything
 """
 
 import asyncio
@@ -24,6 +25,7 @@ from rich.rule import Rule
 
 from src.agents.graph import run_agent
 from src.config import settings
+from src.bot.scheduler import SLOT_PROMPTS
 
 console = Console()
 
@@ -123,12 +125,22 @@ async def _handle_command_async(cmd: str) -> bool:
         await _run(f"請分析以下股票：{symbols}")
         return True
 
+    if directive == "/schedule":
+        slot_map = {"pre": "pre_market", "mid": "mid_session", "post": "post_market"}
+        slot_key = parts[1].lower() if len(parts) > 1 else ""
+        if slot_key not in slot_map:
+            console.print("[red]用法: /schedule pre|mid|post[/red]")
+            return True
+        await _run(SLOT_PROMPTS[slot_map[slot_key]])
+        return True
+
     if directive == "/help":
         console.print(Panel(
-            "[bold]/brief[/bold]          今日市場摘要\n"
-            "[bold]/stock[/bold] [cyan]<代號>[/cyan]   分析指定股票，例如 /stock 2330\n"
-            "[bold]/clear[/bold]          清除對話記憶\n"
-            "[bold]/quit[/bold]           離開\n"
+            "[bold]/brief[/bold]                今日市場摘要\n"
+            "[bold]/stock[/bold] [cyan]<代號>[/cyan]       分析指定股票，例如 /stock 2330\n"
+            "[bold]/schedule[/bold] [cyan]pre|mid|post[/cyan]  觸發排程報告（盤前/盤中/收盤後）\n"
+            "[bold]/clear[/bold]                清除對話記憶\n"
+            "[bold]/quit[/bold]                 離開\n"
             "[dim]或直接輸入問題[/dim]",
             title="Market Agent CLI",
             border_style="blue",

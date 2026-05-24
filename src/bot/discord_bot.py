@@ -60,6 +60,8 @@ class MarketAgentBot(commands.Bot):
         else:
             await self.tree.sync()
         logger.info("Discord bot ready, slash commands synced")
+        from src.bot.scheduler import start_scheduled_tasks
+        start_scheduled_tasks(self)
 
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} (id: {self.user.id})")
