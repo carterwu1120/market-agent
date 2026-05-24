@@ -29,12 +29,7 @@ async def news_agent_node(state: AgentState) -> dict:
     symbols = state.target_symbols
     if symbols:
         codes = [s.replace(".TW", "") for s in symbols]
-        filtered = [
-            a for a in articles
-            if any(code in (a.get("title", "") + a.get("content", "")) for code in codes)
-        ]
-        if not filtered:
-            filtered = articles
+        filtered = articles
     else:
         filtered = articles
 
