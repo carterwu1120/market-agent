@@ -166,6 +166,85 @@ async def fetch_gnews(query: str = "stock market", lookback_hours: int | None = 
     return articles
 
 
+# Ticker → company name map for building targeted search queries
+_TICKER_NAMES: dict[str, list[str]] = {
+    "2330": ["台積電", "TSMC"],
+    "2454": ["聯發科", "MediaTek"],
+    "2317": ["鴻海", "Foxconn"],
+    "2308": ["台達電"],
+    "2382": ["廣達"],
+    "3231": ["緯創"],
+    "3711": ["日月光"],
+    "2303": ["聯電", "UMC"],
+    "2412": ["中華電"],
+    "2881": ["富邦金"],
+    "2882": ["國泰金"],
+    "2884": ["玉山金"],
+    "2049": ["上銀"],
+    "2376": ["技嘉"],
+    "2353": ["宏碁", "Acer"],
+    "2357": ["華碩", "ASUS"],
+    "2327": ["國巨"],
+    "3481": ["群創"],
+    "2603": ["長榮"],
+    "2313": ["華通"],
+}
+
+
+async def fetch_targeted_news(
+    symbols: list[str],
+    lookback_hours: int | None = None,
+) -> list[NewsArticle]:
+    """Fetch news targeted at specific stocks using NewsAPI + GNews.
+
+    Falls back to broad RSS when no API keys are configured.
+    """
+    import asyncio
+
+    codes = [s.replace(".TW", "").replace(".TWO", "") for s in symbols]
+    terms: list[str] = []
+    for code in codes:
+        terms.append(code)
+        terms.extend(_TICKER_NAMES.get(code, []))
+
+    # Build OR query, cap at 10 terms to stay within API limits
+    query = " OR ".join(terms[:10])
+    logger.info(f"NewsAgent targeted query: '{query}'")
+
+    api_results = await asyncio.gather(
+        fetch_newsapi(query, lookback_hours),
+        fetch_gnews(query, lookback_hours),
+        return_exceptions=True,
+    )
+
+    all_articles: list[NewsArticle] = []
+    for r in api_results:
+        if isinstance(r, Exception):
+            logger.warning(f"Targeted news source failed: {r}")
+        else:
+            all_articles.extend(r)
+
+    # If no API keys are configured, fall back to RSS + soft filter
+    if not all_articles:
+        logger.info("Targeted news: no API results, falling back to RSS with soft filter")
+        rss = await fetch_rss_news(lookback_hours)
+        all_articles = [
+            a for a in rss
+            if any(t in (a.title + a.content) for t in terms)
+        ] or rss  # if nothing matches, return all RSS as context
+
+    # Deduplicate by URL
+    seen: set[str] = set()
+    unique = []
+    for a in all_articles:
+        if a.source_url and a.source_url not in seen:
+            seen.add(a.source_url)
+            unique.append(a)
+
+    logger.info(f"Targeted news: {len(unique)} unique articles for {len(symbols)} symbols")
+    return unique
+
+
 async def fetch_all_news(lookback_hours: int | None = None) -> list[NewsArticle]:
     """Aggregate from all sources concurrently, deduplicate by URL.
 
