@@ -194,6 +194,7 @@ _TICKER_NAMES: dict[str, list[str]] = {
 async def fetch_targeted_news(
     symbols: list[str],
     lookback_hours: int | None = None,
+    extra_keywords: list[str] | None = None,
 ) -> list[NewsArticle]:
     """Fetch news targeted at specific stocks using NewsAPI + GNews.
 
@@ -206,6 +207,10 @@ async def fetch_targeted_news(
     for code in codes:
         terms.append(code)
         terms.extend(_TICKER_NAMES.get(code, []))
+
+    # Prepend theme/sector keywords so they anchor the search
+    if extra_keywords:
+        terms = [k for k in extra_keywords if k] + terms
 
     # Build OR query, cap at 10 terms to stay within API limits
     query = " OR ".join(terms[:10])
@@ -228,9 +233,10 @@ async def fetch_targeted_news(
     if not all_articles:
         logger.info("Targeted news: no API results, falling back to RSS with soft filter")
         rss = await fetch_rss_news(lookback_hours)
+        filter_terms = terms + (extra_keywords or [])
         all_articles = [
             a for a in rss
-            if any(t in (a.title + a.content) for t in terms)
+            if any(t in (a.title + a.content) for t in filter_terms)
         ] or rss  # if nothing matches, return all RSS as context
 
     # Deduplicate by URL

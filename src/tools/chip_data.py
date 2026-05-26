@@ -22,40 +22,48 @@ TPEX_BASE = "https://www.tpex.org.tw"
 async def get_institutional_trading(symbol: str, query_date: date | None = None) -> dict[str, Any]:
     """
     Fetch 三大法人 (foreign/trust/dealer) net buy/sell from TWSE open data API.
+    Falls back up to 5 previous calendar days when today has no data.
     Source: https://www.twse.com.tw/rwd/zh/fund/T86
     """
-    query_date = query_date or date.today()
-    date_str = query_date.strftime("%Y%m%d")
-    url = f"{TWSE_BASE}/rwd/zh/fund/T86?date={date_str}&selectType=ALLBUT0999&response=json"
+    from datetime import timedelta
+    base_date = query_date or date.today()
+    target_code = symbol.replace(".TW", "")
+
+    def to_int(s: str) -> int:
+        return int(s.replace(",", "").replace("+", "") or 0)
 
     async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "Mozilla/5.0"}) as client:
-        try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as exc:
-            logger.warning(f"TWSE institutional data failed: {exc}")
-            return {"symbol": symbol, "error": str(exc), "source": url}
+        for days_back in range(5):
+            target = base_date - timedelta(days=days_back)
+            date_str = target.strftime("%Y%m%d")
+            url = f"{TWSE_BASE}/rwd/zh/fund/T86?date={date_str}&selectType=ALLBUT0999&response=json"
+            try:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception as exc:
+                logger.warning(f"TWSE institutional data failed ({date_str}): {exc}")
+                continue
 
-    rows = data.get("data", [])
-    # Row format: [代號, 名稱, 外資買, 外資賣, 外資淨買, 投信買, 投信賣, 投信淨買, 自營買, 自營賣, 自營淨買, 三大合計]
-    target_code = symbol.replace(".TW", "")
-    for row in rows:
-        if row[0] == target_code:
-            def to_int(s: str) -> int:
-                return int(s.replace(",", "").replace("+", "") or 0)
-            return {
-                "symbol": symbol,
-                "date": query_date.isoformat(),
-                "foreign_net": to_int(row[4]),    # 外資淨買超（張）
-                "trust_net": to_int(row[7]),       # 投信淨買超
-                "dealer_net": to_int(row[10]),     # 自營商淨買超
-                "total_3_institutions": to_int(row[11]),
-                "source": f"{TWSE_BASE}/rwd/zh/fund/T86",
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
-            }
+            rows = data.get("data", [])
+            if not rows:
+                continue  # no trading data for this date, try previous day
 
-    return {"symbol": symbol, "date": query_date.isoformat(), "error": "symbol not found", "source": url}
+            for row in rows:
+                if row[0] == target_code:
+                    return {
+                        "symbol": symbol,
+                        "date": target.isoformat(),
+                        "foreign_net": to_int(row[4]),
+                        "trust_net": to_int(row[7]),
+                        "dealer_net": to_int(row[10]),
+                        "total_3_institutions": to_int(row[11]),
+                        "source": f"{TWSE_BASE}/rwd/zh/fund/T86",
+                        "fetched_at": datetime.now(timezone.utc).isoformat(),
+                    }
+            break  # date had data but symbol not found
+
+    return {"symbol": symbol, "date": base_date.isoformat(), "error": "symbol not found", "source": f"{TWSE_BASE}/rwd/zh/fund/T86"}
 
 
 # ── Goodinfo 籌碼資料（補充）────────────────────────────────────────────────────

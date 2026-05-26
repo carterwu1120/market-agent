@@ -32,4 +32,5 @@ async def chip_agent_node(state: AgentState) -> dict:
         if r.get("institutional", {}).get("source"):
             sources.append(r["institutional"]["source"])
 
+    logger.debug(f"ChipAgent raw data sample: {data[:2]}")
     return {"chip_data": data, "sources": sources}

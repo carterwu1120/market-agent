@@ -30,7 +30,11 @@ async def news_agent_node(state: AgentState) -> dict:
             await save_news_cache(articles)
     else:
         logger.info(f"NewsAgent: targeted mode for {len(state.target_symbols)} symbols")
-        raw = await fetch_targeted_news(state.target_symbols, settings.news_lookback_hours)
+        raw = await fetch_targeted_news(
+            state.target_symbols,
+            settings.news_lookback_hours,
+            extra_keywords=[state.sector_query] if state.sector_query else None,
+        )
         articles = [asdict(a) for a in raw]
 
     limited = articles[: settings.max_news_per_run]
