@@ -13,15 +13,12 @@ from src.config import settings
 
 # ── RSS feed registry ─────────────────────────────────────────────────────────
 TW_RSS_FEEDS = [
-    ("鉅亨網-台股", "https://feeds.cnyes.com/feeds/cat/tw_stock.xml"),
-    ("鉅亨網-國際", "https://feeds.cnyes.com/feeds/cat/wd_stock.xml"),
     ("MoneyUDN", "https://money.udn.com/rssfeed/news/1001/5590?ch=money"),
     ("經濟日報", "https://money.udn.com/rssfeed/news/1001/5591?ch=money"),
 ]
 
 INTERNATIONAL_RSS_FEEDS = [
-    ("Reuters Business", "https://feeds.reuters.com/reuters/businessNews"),
-    ("Reuters Technology", "https://feeds.reuters.com/reuters/technologyNews"),
+    ("Yahoo Finance", "https://finance.yahoo.com/news/rssindex"),
     ("Bloomberg Markets", "https://feeds.bloomberg.com/markets/news.rss"),
     ("FT Markets", "https://www.ft.com/rss/home/uk"),
 ]
@@ -65,7 +62,7 @@ async def fetch_rss_news(lookback_hours: int | None = None) -> list[NewsArticle]
     feeds = TW_RSS_FEEDS + INTERNATIONAL_RSS_FEEDS
     articles: list[NewsArticle] = []
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(timeout=15, headers={"User-Agent": "Mozilla/5.0 (compatible; MarketBot/1.0)"}) as client:
         for name, url in feeds:
             try:
                 resp = await client.get(url, follow_redirects=True)
@@ -132,6 +129,8 @@ async def fetch_gnews(query: str = "stock market", lookback_hours: int | None = 
         return []
 
     lookback_hours = lookback_hours or settings.news_lookback_hours
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+    from_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
     async with httpx.AsyncClient(timeout=15) as client:
         try:
             resp = await client.get(
@@ -140,6 +139,8 @@ async def fetch_gnews(query: str = "stock market", lookback_hours: int | None = 
                     "q": query,
                     "max": settings.max_news_per_run,
                     "apikey": settings.gnews_api_key,
+                    "from": from_str,
+                    "sortby": "publishedAt",
                 },
             )
             resp.raise_for_status()
