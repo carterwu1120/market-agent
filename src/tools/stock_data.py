@@ -185,3 +185,42 @@ async def get_fundamental_data(symbol: str) -> dict[str, Any]:
     except Exception as exc:
         logger.warning(f"Fundamental data failed [{ticker_sym}]: {exc}")
         return {"symbol": ticker_sym, "error": str(exc)}
+
+
+async def get_market_indices() -> dict:
+    """Fetch major market indices: 台股加權、S&P500、NASDAQ、Dow Jones."""
+    INDICES = {
+        "TWII": ("^TWII", "台股加權指數"),
+        "SP500": ("^GSPC", "S&P 500"),
+        "NASDAQ": ("^IXIC", "NASDAQ"),
+        "DJI": ("^DJI", "道瓊工業"),
+    }
+
+    def _fetch_index(ticker: str, name: str) -> dict:
+        try:
+            t = yf.Ticker(ticker)
+            hist = t.history(period="2d")
+            if hist.empty:
+                return {"name": name, "error": "no data"}
+            last = hist.iloc[-1]
+            if len(hist) < 2:
+                return {"name": name, "error": "insufficient history"}
+            prev = hist.iloc[-2]
+            close = round(float(last["Close"]), 2)
+            change_pct = round((float(last["Close"]) - float(prev["Close"])) / float(prev["Close"]) * 100, 2)
+            return {
+                "name": name,
+                "close": close,
+                "change_pct": change_pct,
+                "date": hist.index[-1].strftime("%Y-%m-%d"),
+                "source": f"https://finance.yahoo.com/quote/{ticker}/",
+            }
+        except Exception as exc:
+            return {"name": name, "error": str(exc)}
+
+    results = await asyncio.gather(*[
+        asyncio.to_thread(_fetch_index, ticker, name)
+        for _, (ticker, name) in INDICES.items()
+    ])
+
+    return {key: result for key, result in zip(INDICES.keys(), results)}

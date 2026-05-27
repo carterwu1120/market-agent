@@ -24,33 +24,47 @@ from src.agents.social_agent import social_agent_node
 from src.agents.rag_agent import rag_agent_node
 from src.agents.synthesizer import synthesizer_node
 from src.agents.research_agent import research_agent_node
+from src.agents.market_agent import market_agent_node
 
 
-_ALL_DATA_AGENTS = [
-    "news_agent", "technical_agent", "fundamental_agent",
-    "chip_agent", "social_agent", "rag_agent",
+_ANALYSIS_AGENTS = [
+    "technical_agent", "fundamental_agent", "chip_agent", "social_agent", "rag_agent",
 ]
+_ALL_DATA_AGENTS = ["news_agent"] + _ANALYSIS_AGENTS
 
 
 def _route_after_orchestrator(state: AgentState) -> list[str]:
-    """Fan-out: decide which sub-agents to run based on intent and cache state."""
     intent = state.intent
 
-    # 複雜開放式問題 → ReAct research_agent（單一路徑，不 fan-out）
     if intent == "research":
         return ["research_agent"]
 
-    # Skip news_agent when Redis cache is still fresh
     news_agents = [] if state.news_cached else ["news_agent"]
 
     if intent in ("stock_query", "sector_query", "theme_query", "follow_up"):
         if state.target_symbols:
-            return news_agents + ["technical_agent", "fundamental_agent", "chip_agent", "social_agent", "rag_agent"]
+            return news_agents + _ANALYSIS_AGENTS
         return news_agents + ["social_agent", "rag_agent"]
     elif intent == "daily_brief":
-        return news_agents + ["social_agent", "rag_agent"]
+        # Phase 1: news first (market_agent runs after news_agent)
+        # If cache hit, go straight to market_agent
+        if state.news_cached:
+            return ["market_agent"]
+        return ["news_agent"]
     else:
         return news_agents + ["social_agent", "rag_agent"]
+
+
+def _route_after_news(state: AgentState) -> str:
+    """news_agent → market_agent for daily_brief, synthesizer otherwise."""
+    if state.intent == "daily_brief":
+        return "market_agent"
+    return "synthesizer"
+
+
+def _route_after_market(state: AgentState) -> list[str]:
+    """market_agent always fans out to full analysis agents."""
+    return _ANALYSIS_AGENTS
 
 
 def build_graph() -> CompiledStateGraph:
@@ -60,6 +74,7 @@ def build_graph() -> CompiledStateGraph:
     builder.add_node("orchestrator", orchestrator_node)
     builder.add_node("research_agent", research_agent_node)
     builder.add_node("news_agent", news_agent_node)
+    builder.add_node("market_agent", market_agent_node)
     builder.add_node("technical_agent", technical_agent_node)
     builder.add_node("fundamental_agent", fundamental_agent_node)
     builder.add_node("chip_agent", chip_agent_node)
@@ -67,22 +82,35 @@ def build_graph() -> CompiledStateGraph:
     builder.add_node("rag_agent", rag_agent_node)
     builder.add_node("synthesizer", synthesizer_node)
 
-    # Entry point
     builder.set_entry_point("orchestrator")
 
-    # Conditional fan-out from orchestrator
-    _ROUTE_TARGETS = _ALL_DATA_AGENTS + ["research_agent"]
+    # Orchestrator fan-out
+    _ROUTE_TARGETS = _ALL_DATA_AGENTS + ["research_agent", "market_agent"]
     builder.add_conditional_edges(
         "orchestrator",
         _route_after_orchestrator,
         {node: node for node in _ROUTE_TARGETS},
     )
 
-    # research_agent goes directly to END (already has final_report)
+    # news_agent: daily_brief → market_agent, others → synthesizer
+    builder.add_conditional_edges(
+        "news_agent",
+        _route_after_news,
+        {"market_agent": "market_agent", "synthesizer": "synthesizer"},
+    )
+
+    # market_agent: fan-out to all analysis agents
+    builder.add_conditional_edges(
+        "market_agent",
+        _route_after_market,
+        {node: node for node in _ANALYSIS_AGENTS},
+    )
+
+    # research_agent → END
     builder.add_edge("research_agent", END)
 
-    # All other sub-agents converge to synthesizer
-    for node in _ALL_DATA_AGENTS:
+    # analysis agents → synthesizer
+    for node in _ANALYSIS_AGENTS:
         builder.add_edge(node, "synthesizer")
 
     builder.add_edge("synthesizer", END)

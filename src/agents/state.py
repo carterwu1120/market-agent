@@ -34,6 +34,9 @@ class AgentState:
     rag_context: Annotated[list[dict], operator.add] = field(default_factory=list)
     insight_data: Annotated[list[dict], operator.add] = field(default_factory=list)  # 法說會/技術新聞
 
+    # ── Market overview (daily_brief only) ────────────────────────
+    market_indices: dict = field(default_factory=dict)
+
     # ── Output ─────────────────────────────────────────────────────
     final_report: str = ""
     conclusion: str = ""  # structured conclusion paragraph for session storage
