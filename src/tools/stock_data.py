@@ -60,17 +60,19 @@ async def get_stock_price(symbol: str) -> dict[str, Any]:
     def _fetch():
         t = yf.Ticker(ticker_sym)
         info = t.fast_info
+        full_info = t.info
         hist = t.history(period="5d")
-        return info, hist
+        return info, full_info, hist
 
     try:
-        info, hist = await asyncio.to_thread(_fetch)
+        info, full_info, hist = await asyncio.to_thread(_fetch)
         last_price = float(hist["Close"].iloc[-1]) if not hist.empty else None
         prev_close = float(hist["Close"].iloc[-2]) if len(hist) > 1 else None
         change_pct = ((last_price - prev_close) / prev_close * 100) if (last_price and prev_close) else None
 
         return {
             "symbol": ticker_sym,
+            "company_name": full_info.get("shortName") or full_info.get("longName") or "",
             "last_price": last_price,
             "prev_close": prev_close,
             "change_pct": round(change_pct, 2) if change_pct else None,
