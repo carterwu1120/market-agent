@@ -341,6 +341,13 @@ async def synthesizer_node(state: AgentState) -> dict:
         report = re.sub(r"CONCLUSION_SUMMARY:\s*", "", report)
         report = re.sub(r"\s*END_CONCLUSION", "", report)
 
+    # Persist daily snapshots to PostgreSQL (fire-and-forget, non-blocking)
+    import asyncio as _asyncio
+    from src.memory.stock_store import upsert_daily_price, upsert_daily_chip, upsert_daily_fundamental
+    _asyncio.ensure_future(upsert_daily_price(state.technical_data))
+    _asyncio.ensure_future(upsert_daily_chip(state.chip_data))
+    _asyncio.ensure_future(upsert_daily_fundamental(state.fundamental_data))
+
     # Collect all sources
     all_sources = list(set(state.sources))
 

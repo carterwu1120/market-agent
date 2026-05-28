@@ -1,9 +1,9 @@
 """SQLAlchemy ORM models for PostgreSQL."""
 
-from datetime import datetime
+from datetime import date, datetime
 from sqlalchemy import (
-    BigInteger, DateTime, ForeignKey, Index, Integer,
-    String, Text, func,
+    BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer,
+    String, Text, UniqueConstraint, func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -75,6 +75,76 @@ class NewsItem(Base):
         Index("ix_news_embedding", "embedding", postgresql_using="hnsw",
               postgresql_with={"m": 16, "ef_construction": 64},
               postgresql_ops={"embedding": "vector_cosine_ops"}),
+    )
+
+
+class StockDailyPrice(Base):
+    """Daily technical indicators per stock, upserted after each analysis run."""
+    __tablename__ = "stock_daily_price"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(20), index=True)
+    company_name: Mapped[str] = mapped_column(String(100), default="")
+    date: Mapped[date] = mapped_column(Date, index=True)
+    close: Mapped[float | None] = mapped_column(Float, nullable=True)
+    change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sma_20: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sma_60: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rsi_14: Mapped[float | None] = mapped_column(Float, nullable=True)
+    macd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    macd_signal: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bb_upper: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bb_lower: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bias_20: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bias_60: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "date", name="uq_stock_daily_price_symbol_date"),
+    )
+
+
+class StockDailyChip(Base):
+    """Daily institutional trading data per stock."""
+    __tablename__ = "stock_daily_chip"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(20), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    foreign_net: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    trust_net: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    dealer_net: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    total_3_institutions: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    margin_buy_balance: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    short_sell_balance: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "date", name="uq_stock_daily_chip_symbol_date"),
+    )
+
+
+class StockDailyFundamental(Base):
+    """Daily fundamental snapshot per stock."""
+    __tablename__ = "stock_daily_fundamental"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(20), index=True)
+    company_name: Mapped[str] = mapped_column(String(100), default="")
+    date: Mapped[date] = mapped_column(Date, index=True)
+    pe_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pb_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    eps_ttm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    roe: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gross_margin: Mapped[float | None] = mapped_column(Float, nullable=True)
+    revenue_growth: Mapped[float | None] = mapped_column(Float, nullable=True)
+    analyst_target: Mapped[float | None] = mapped_column(Float, nullable=True)
+    analyst_recommendation: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "date", name="uq_stock_daily_fundamental_symbol_date"),
     )
 
 
