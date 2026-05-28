@@ -444,7 +444,9 @@ async def synthesizer_node(state: AgentState) -> dict:
         report = re.sub(r"CONCLUSION_SUMMARY:\s*", "", report)
         report = re.sub(r"\s*END_CONCLUSION", "", report)
 
-    # Persist daily snapshots to PostgreSQL (fire-and-forget, non-blocking)
+    # Persist daily snapshots to PostgreSQL (best-effort, non-blocking)
+    # history_query reads may miss data if queried immediately after a stock query,
+    # but blocking on DB writes would stall all report generation when Postgres is slow.
     import asyncio as _asyncio
     from src.memory.stock_store import upsert_daily_price, upsert_daily_chip, upsert_daily_fundamental
     _asyncio.ensure_future(upsert_daily_price(state.technical_data))
