@@ -37,6 +37,10 @@ class AgentState:
     # ── Market overview (daily_brief only) ────────────────────────
     market_indices: dict = field(default_factory=dict)
 
+    # ── History query ──────────────────────────────────────────────
+    history_days: int = 7
+    history_data: Annotated[list[dict], operator.add] = field(default_factory=list)
+
     # ── Output ─────────────────────────────────────────────────────
     final_report: str = ""
     conclusion: str = ""  # structured conclusion paragraph for session storage

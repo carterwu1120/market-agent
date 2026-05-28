@@ -263,8 +263,111 @@ def _summarize_social(data: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _summarize_history(history_data: list[dict]) -> str:
+    if not history_data:
+        return "無歷史資料"
+    parts = []
+    for item in history_data:
+        sym = item.get("symbol", "")
+        price_rows = item.get("price_history", [])
+        chip_rows = item.get("chip_history", [])
+        fund_rows = item.get("fundamental_history", [])
+        if item.get("error"):
+            parts.append(f"### {sym}\n資料查詢失敗：{item['error']}")
+            continue
+        if not price_rows and not chip_rows and not fund_rows:
+            parts.append(f"### {sym}\nDB 尚無歷史記錄（請先查詢該股票以建立記錄）")
+            continue
+        parts.append(f"### {sym}")
+        if price_rows:
+            lines = ["| 日期 | 收盤價 | 漲跌% | MA20 | MA60 | RSI(14) |",
+                     "|------|--------|-------|------|------|---------|"]
+            for r in price_rows:
+                lines.append(f"| {r['date']} | {r.get('close','N/A')} | {r.get('change_pct','N/A')} "
+                             f"| {r.get('sma_20','N/A')} | {r.get('sma_60','N/A')} | {r.get('rsi_14','N/A')} |")
+            parts.append("\n".join(lines))
+        if chip_rows:
+            lines = ["| 日期 | 外資 | 投信 | 自營商 | 三大法人合計 |",
+                     "|------|------|------|--------|-------------|"]
+            for r in chip_rows:
+                lines.append(f"| {r['date']} | {r.get('foreign_net','N/A')} | {r.get('trust_net','N/A')} "
+                             f"| {r.get('dealer_net','N/A')} | {r.get('total_3_institutions','N/A')} |")
+            parts.append("\n".join(lines))
+        if fund_rows:
+            lines = ["| 日期 | 本益比 | 股價淨值比 | EPS(TTM) | ROE | 毛利率 |",
+                     "|------|--------|------------|----------|-----|--------|"]
+            for r in fund_rows:
+                lines.append(f"| {r['date']} | {r.get('pe_ratio','N/A')} | {r.get('pb_ratio','N/A')} "
+                             f"| {r.get('eps_ttm','N/A')} | {r.get('roe','N/A')} | {r.get('gross_margin','N/A')} |")
+            parts.append("\n".join(lines))
+    return "\n\n".join(parts)
+
+
+HISTORY_SYNTHESIS_PROMPT = """以下是從資料庫查詢到的歷史股市資料，請根據這些數據撰寫分析摘要。
+
+=== 時間資訊 ===
+今日日期：{today}
+查詢範圍：最近 {days} 個日曆天內的交易日記錄（非交易日無資料，實際筆數可能少於 {days} 筆）
+
+=== 使用者問題 ===
+{user_message}
+
+=== 歷史數據（系統從資料庫查詢，數字已驗證）===
+{history_summary}
+
+---
+請針對每個股票，根據上方歷史數據撰寫趨勢分析（3-5句），重點包括：
+- 股價走勢與均線關係變化
+- 法人動向趨勢（是否持續買超/賣超）
+- 技術指標（RSI、均線）的多空訊號
+
+若無資料，說明「資料庫尚無該標的歷史記錄，請先透過 /brief 或個股查詢建立記錄」。
+
+末尾包含：
+CONCLUSION_SUMMARY:
+（2-3 句總結）
+END_CONCLUSION
+"""
+
+
+async def _synthesize_history(state: AgentState) -> dict:
+    now = _tw_now()
+    history_table = _summarize_history(state.history_data)
+    prompt = HISTORY_SYNTHESIS_PROMPT.format(
+        today=now.strftime("%Y-%m-%d %A"),
+        days=state.history_days or 7,
+        user_message=state.user_message,
+        history_summary=history_table,
+    )
+    try:
+        llm_analysis = await llm_chat(
+            messages=[
+                {"role": "system", "content": SYNTHESIS_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+        )
+    except Exception as exc:
+        logger.error(f"Synthesizer (history) LLM failed: {exc}")
+        llm_analysis = f"⚠️ 報告生成失敗：{exc}"
+
+    report = llm_analysis
+    conclusion = ""
+    match = re.search(r"CONCLUSION_SUMMARY:\s*(.*?)\s*END_CONCLUSION", report, re.DOTALL)
+    if match:
+        conclusion = match.group(1).strip()
+        report = re.sub(r"CONCLUSION_SUMMARY:\s*", "", report)
+        report = re.sub(r"\s*END_CONCLUSION", "", report)
+
+    return {"final_report": report, "conclusion": conclusion, "sources": []}
+
+
 async def synthesizer_node(state: AgentState) -> dict:
     logger.info("Synthesizer: generating report")
+
+    # history_query: special path — render history tables, skip news/technical agents
+    if state.intent == "history_query":
+        return await _synthesize_history(state)
 
     # theme_query: use theme_articles (news from keyword search) as primary news source
     news_articles = state.news_articles

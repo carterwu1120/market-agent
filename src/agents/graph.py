@@ -5,7 +5,9 @@ Flow:
       │
       ├── daily_brief → [news, social, rag] → synthesizer
       │
-      └── stock_query → [news, technical, fundamental, chip, social, rag] → synthesizer
+      ├── stock_query → [news, technical, fundamental, chip, social, rag] → synthesizer
+      │
+      └── history_query → history_agent → synthesizer
 
 Parallel branches use Send for fan-out. All branches converge at synthesizer.
 """
@@ -25,6 +27,7 @@ from src.agents.rag_agent import rag_agent_node
 from src.agents.synthesizer import synthesizer_node
 from src.agents.research_agent import research_agent_node
 from src.agents.market_agent import market_agent_node
+from src.agents.history_agent import history_agent_node
 
 
 _ANALYSIS_AGENTS = [
@@ -38,6 +41,9 @@ def _route_after_orchestrator(state: AgentState) -> list[str]:
 
     if intent == "research":
         return ["research_agent"]
+
+    if intent == "history_query":
+        return ["history_agent"]
 
     news_agents = [] if state.news_cached else ["news_agent"]
 
@@ -81,11 +87,12 @@ def build_graph() -> CompiledStateGraph:
     builder.add_node("social_agent", social_agent_node)
     builder.add_node("rag_agent", rag_agent_node)
     builder.add_node("synthesizer", synthesizer_node)
+    builder.add_node("history_agent", history_agent_node)
 
     builder.set_entry_point("orchestrator")
 
     # Orchestrator fan-out
-    _ROUTE_TARGETS = _ALL_DATA_AGENTS + ["research_agent", "market_agent"]
+    _ROUTE_TARGETS = _ALL_DATA_AGENTS + ["research_agent", "market_agent", "history_agent"]
     builder.add_conditional_edges(
         "orchestrator",
         _route_after_orchestrator,
@@ -105,6 +112,9 @@ def build_graph() -> CompiledStateGraph:
         _route_after_market,
         {node: node for node in _ANALYSIS_AGENTS},
     )
+
+    # history_agent → synthesizer
+    builder.add_edge("history_agent", "synthesizer")
 
     # research_agent → END
     builder.add_edge("research_agent", END)

@@ -36,6 +36,7 @@ Intents:
 - "stock_query": User is asking about specific stock(s) by name or ticker code
 - "sector_query": User is asking about an official TWSE industry sector (e.g. 半導體業, 傳產, 石油, 金融)
 - "theme_query": User is asking about a market theme/concept (e.g. 機器人題材, AI概念, 電動車, 軍工, 低軌衛星)
+- "history_query": User is asking about HISTORICAL data for a stock (e.g. 台積電上週法人動向、2330過去幾天的均線、最近外資買了多少)
 - "research": User is asking a complex, open-ended or comparative question that requires multi-step reasoning
   (e.g. 比較兩個產業、找最值得買的股票、哪個類股現在最強、幫我分析要買哪一支、還有其他個股嗎、有沒有更好的選擇、還有什麼可以比較)
 - "follow_up": User is asking for more details about a SPECIFIC stock already mentioned (e.g. 那台積電的技術面如何、聯發科的本益比是多少)
@@ -51,8 +52,10 @@ Extract Taiwan stock codes from company names using your knowledge.
 If the user refers to a stock mentioned in the conversation history, include it in symbols.
 For sector_query and theme_query, do NOT extract individual symbols.
 
+For history_query, also extract how many days the user wants (default 7 if not specified).
+
 Return ONLY valid JSON:
-{"intent": "<intent>", "symbols": ["2330.TW", ...], "reasoning": "brief reason"}
+{"intent": "<intent>", "symbols": ["2330.TW", ...], "history_days": 7, "reasoning": "brief reason"}
 """
 
 
@@ -90,9 +93,23 @@ async def orchestrator_node(state: AgentState) -> dict:
         parsed = json.loads(raw)
         intent = parsed.get("intent", "unknown")
         llm_symbols = parsed.get("symbols", [])
+        try:
+            history_days = max(1, min(int(parsed.get("history_days") or 7), 90))
+        except (TypeError, ValueError):
+            history_days = 7
     except Exception as exc:
         logger.warning(f"Orchestrator LLM call failed: {exc}")
-        intent = "daily_brief" if not pre_symbols else "stock_query"
+        _HISTORY_KW = ["過去", "上週", "幾天", "歷史", "上個月", "之前", "本週幾天", "過去幾天"]
+        if pre_symbols and any(kw in msg for kw in _HISTORY_KW):
+            intent = "history_query"
+            m = re.search(r"(\d+)\s*天", msg)
+            history_days = max(1, min(int(m.group(1)), 90)) if m else 7
+        elif not pre_symbols:
+            intent = "daily_brief"
+            history_days = 7
+        else:
+            intent = "stock_query"
+            history_days = 7
         llm_symbols = []
 
     # Also check company name lookup
@@ -158,4 +175,5 @@ async def orchestrator_node(state: AgentState) -> dict:
         "sector_names": resolved_sector_names,
         "news_cached": news_cached,
         "theme_articles": theme_articles,
+        "history_days": history_days,
     }
