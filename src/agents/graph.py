@@ -3,13 +3,9 @@
 Flow:
   orchestrator
       │
-      ├── daily_brief → [news, social, rag] → synthesizer
+      ├── daily_brief → news_agent → market_agent → [technical, fundamental, chip, social, rag] → synthesizer
       │
-      ├── stock_query → [news, technical, fundamental, chip, social, rag] → synthesizer
-      │
-      └── history_query → history_agent → synthesizer
-
-Parallel branches use Send for fan-out. All branches converge at synthesizer.
+      └── react → research_agent → END
 """
 
 from langgraph.graph import StateGraph, END
@@ -27,56 +23,31 @@ from src.agents.rag_agent import rag_agent_node
 from src.agents.synthesizer import synthesizer_node
 from src.agents.research_agent import research_agent_node
 from src.agents.market_agent import market_agent_node
-from src.agents.history_agent import history_agent_node
 
 
 _ANALYSIS_AGENTS = [
     "technical_agent", "fundamental_agent", "chip_agent", "social_agent", "rag_agent",
 ]
-_ALL_DATA_AGENTS = ["news_agent"] + _ANALYSIS_AGENTS
 
 
 def _route_after_orchestrator(state: AgentState) -> list[str]:
-    intent = state.intent
-
-    if intent == "research":
-        return ["research_agent"]
-
-    if intent == "history_query":
-        return ["history_agent"]
-
-    news_agents = [] if state.news_cached else ["news_agent"]
-
-    if intent in ("stock_query", "sector_query", "theme_query", "follow_up"):
-        if state.target_symbols:
-            return news_agents + _ANALYSIS_AGENTS
-        return news_agents + ["social_agent", "rag_agent"]
-    elif intent == "daily_brief":
-        # Phase 1: news first (market_agent runs after news_agent)
-        # If cache hit, go straight to market_agent
-        if state.news_cached:
-            return ["market_agent"]
-        return ["news_agent"]
-    else:
-        return news_agents + ["social_agent", "rag_agent"]
+    if state.intent == "daily_brief":
+        return ["market_agent"] if state.news_cached else ["news_agent"]
+    return ["research_agent"]
 
 
 def _route_after_news(state: AgentState) -> str:
-    """news_agent → market_agent for daily_brief, synthesizer otherwise."""
-    if state.intent == "daily_brief":
-        return "market_agent"
-    return "synthesizer"
+    """news_agent always feeds into market_agent (only reached during daily_brief)."""
+    return "market_agent"
 
 
 def _route_after_market(state: AgentState) -> list[str]:
-    """market_agent always fans out to full analysis agents."""
     return _ANALYSIS_AGENTS
 
 
 def build_graph() -> CompiledStateGraph:
     builder = StateGraph(AgentState)
 
-    # Add all nodes
     builder.add_node("orchestrator", orchestrator_node)
     builder.add_node("research_agent", research_agent_node)
     builder.add_node("news_agent", news_agent_node)
@@ -87,39 +58,25 @@ def build_graph() -> CompiledStateGraph:
     builder.add_node("social_agent", social_agent_node)
     builder.add_node("rag_agent", rag_agent_node)
     builder.add_node("synthesizer", synthesizer_node)
-    builder.add_node("history_agent", history_agent_node)
 
     builder.set_entry_point("orchestrator")
 
-    # Orchestrator fan-out
-    _ROUTE_TARGETS = _ALL_DATA_AGENTS + ["research_agent", "market_agent", "history_agent"]
     builder.add_conditional_edges(
         "orchestrator",
         _route_after_orchestrator,
-        {node: node for node in _ROUTE_TARGETS},
+        {"news_agent": "news_agent", "market_agent": "market_agent", "research_agent": "research_agent"},
     )
 
-    # news_agent: daily_brief → market_agent, others → synthesizer
-    builder.add_conditional_edges(
-        "news_agent",
-        _route_after_news,
-        {"market_agent": "market_agent", "synthesizer": "synthesizer"},
-    )
+    builder.add_edge("news_agent", "market_agent")
 
-    # market_agent: fan-out to all analysis agents
     builder.add_conditional_edges(
         "market_agent",
         _route_after_market,
         {node: node for node in _ANALYSIS_AGENTS},
     )
 
-    # history_agent → synthesizer
-    builder.add_edge("history_agent", "synthesizer")
-
-    # research_agent → END
     builder.add_edge("research_agent", END)
 
-    # analysis agents → synthesizer
     for node in _ANALYSIS_AGENTS:
         builder.add_edge(node, "synthesizer")
 
@@ -128,7 +85,6 @@ def build_graph() -> CompiledStateGraph:
     return builder.compile()
 
 
-# Singleton graph instance
 _graph: CompiledStateGraph | None = None
 
 
@@ -160,7 +116,6 @@ async def run_agent(
     except Exception as exc:
         elapsed = time.perf_counter() - t0
         logger.error(f"run_agent failed after {elapsed:.1f}s: {exc}", exc_info=True)
-        # Return a minimal state with a user-friendly error embedded
         stage = _infer_failed_stage(str(exc))
         initial_state.final_report = (
             f"⚠️ 分析流程在「{stage}」階段發生錯誤，請稍後再試。\n"
@@ -174,7 +129,6 @@ async def run_agent(
 
 
 def _infer_failed_stage(error_msg: str) -> str:
-    """Map common error patterns to a human-readable pipeline stage name."""
     msg = error_msg.lower()
     if "synthesizer" in msg or "llm" in msg or "litellm" in msg:
         return "報告生成"

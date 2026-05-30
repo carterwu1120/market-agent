@@ -10,6 +10,7 @@ LLM 自主決定呼叫哪些工具、呼叫幾次，直到有足夠資訊回答�
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -23,6 +24,7 @@ from src.llm import get_langchain_llm
 from src.tools.sector_data import get_sector_symbols
 from src.tools.theme_search import search_theme_stocks
 from src.tools.stock_data import get_technical_indicators, get_fundamental_data
+from src.tools.chip_data import get_institutional_trading, get_margin_trading
 from src.tools.company_insight import get_company_insights
 
 MAX_ITERATIONS = 6  # 防止無限循環
@@ -55,9 +57,23 @@ async def theme_lookup(keyword: str) -> str:
 @tool
 async def technical_analysis(symbol: str) -> str:
     """查詢個股技術面指標：現價、RSI、MACD、均線、乖離率、布林帶。symbol 格式：2330.TW"""
-    ind = await get_technical_indicators(symbol)
-    if ind.get("error"):
-        return f"{symbol} 技術面資料取得失敗：{ind['error']}"
+    from src.tools.stock_data import get_stock_price
+    ind, price = await asyncio.gather(
+        get_technical_indicators(symbol),
+        get_stock_price(symbol),
+        return_exceptions=True,
+    )
+    if isinstance(ind, Exception) or (isinstance(ind, dict) and ind.get("error")):
+        return f"{symbol} 技術面資料取得失敗：{ind}"
+    # Persist to DB only when price fetch also succeeded to avoid NULLing existing close/volume fields
+    price_ok = isinstance(price, dict) and not price.get("error")
+    if price_ok:
+        from src.memory.stock_store import upsert_daily_price
+        asyncio.ensure_future(upsert_daily_price([{
+            "symbol": symbol,
+            "price": price,
+            "indicators": ind,
+        }]))
     return (
         f"{symbol} | 現價: {ind.get('close')} | RSI: {ind.get('rsi_14')} | "
         f"MACD: {ind.get('macd')} | MA20: {ind.get('sma_20')} | MA60: {ind.get('sma_60')} | "
@@ -72,6 +88,9 @@ async def fundamental_analysis(symbol: str) -> str:
     data = await get_fundamental_data(symbol)
     if data.get("error"):
         return f"{symbol} 基本面資料取得失敗：{data['error']}"
+    # Persist to DB (fire-and-forget)
+    from src.memory.stock_store import upsert_daily_fundamental
+    asyncio.ensure_future(upsert_daily_fundamental([data]))
     return (
         f"{symbol} {data.get('company_name', '')} | "
         f"PE: {data.get('pe_ratio')} | PB: {data.get('pb_ratio')} | "
@@ -95,6 +114,45 @@ async def company_news(symbol: str) -> str:
 
 
 @tool
+async def chip_analysis(symbol: str) -> str:
+    """查詢個股即時籌碼面：三大法人買賣超（外資/投信/自營商）、融資融券餘額。symbol 格式：2330.TW"""
+    inst, margin = await asyncio.gather(
+        get_institutional_trading(symbol),
+        get_margin_trading(symbol),
+        return_exceptions=True,
+    )
+    inst_ok = not isinstance(inst, Exception) and not (isinstance(inst, dict) and inst.get("error"))
+    margin_ok = not isinstance(margin, Exception) and not (isinstance(margin, dict) and margin.get("error"))
+
+    # Persist only when both fetches succeeded to avoid NULLing existing margin balance fields
+    if inst_ok and margin_ok:
+        from src.memory.stock_store import upsert_daily_chip
+        asyncio.ensure_future(upsert_daily_chip([{
+            "symbol": symbol,
+            "institutional": inst,
+            "margin": margin,
+        }]))
+
+    parts = [f"{symbol} 籌碼面："]
+    if not inst_ok:
+        parts.append("  三大法人：資料取得失敗")
+    else:
+        parts.append(
+            f"  [{inst.get('date', 'N/A')}] 外資:{inst.get('foreign_net')} "
+            f"投信:{inst.get('trust_net')} 自營:{inst.get('dealer_net')} "
+            f"合計:{inst.get('total_3_institutions')}"
+        )
+    if not margin_ok:
+        parts.append("  融資融券：資料取得失敗")
+    else:
+        parts.append(
+            f"  融資餘額:{margin.get('margin_buy_balance')} "
+            f"融券餘額:{margin.get('short_sell_balance')}"
+        )
+    return "\n".join(parts)
+
+
+@tool
 async def stock_history(symbol: str, days: int = 7) -> str:
     """查詢個股歷史快照（收盤價/均線/法人動向），資料來自本系統每日儲存的 DB 記錄。
     若 DB 無資料，說明原因。symbol 格式：2330.TW"""
@@ -105,7 +163,7 @@ async def stock_history(symbol: str, days: int = 7) -> str:
     chip = data.get("chip_history", [])
     fund = data.get("fundamental_history", [])
     if not price and not chip and not fund:
-        return f"{symbol} DB 尚無歷史記錄（請先查詢該股票以建立記錄）"
+        return f"{symbol} DB 尚無歷史記錄（每日 brief 會自動建立；若需即時數據請用 technical_analysis 或 chip_analysis）"
     lines = [f"{symbol} 最近 {days} 個日曆天內的交易日快照："]
     for r in price:
         lines.append(f"  {r['date']} 收盤:{r.get('close')} MA20:{r.get('sma_20')} RSI:{r.get('rsi_14')}")
@@ -125,6 +183,7 @@ REACT_SYSTEM = """你是一個台股研究分析師，可以使用以下工具�
 - technical_analysis(symbol): 查個股技術面（RSI、MACD、均線、乖離率…）
 - fundamental_analysis(symbol): 查個股基本面（PE、ROE、營收成長…）
 - company_news(symbol): 查個股法說會與技術新聞
+- chip_analysis(symbol): 查個股即時籌碼面（三大法人買賣超、融資融券）
 - stock_history(symbol, days): 查個股歷史快照（本系統 DB 記錄，有資料才有）
 
 策略：
@@ -140,7 +199,7 @@ REACT_SYSTEM = """你是一個台股研究分析師，可以使用以下工具�
 
 # ── Agent Node ───────────────────────────────────────────────────────────────
 
-_TOOLS = [sector_lookup, theme_lookup, technical_analysis, fundamental_analysis, company_news, stock_history]
+_TOOLS = [sector_lookup, theme_lookup, technical_analysis, fundamental_analysis, chip_analysis, company_news, stock_history]
 _tool_node = ToolNode(_TOOLS)
 
 
@@ -189,24 +248,32 @@ async def research_agent_node(state: AgentState) -> dict:
     ]
 
     iterations = 0
+    used_symbols: list[str] = []
+
     while iterations < MAX_ITERATIONS:
         iterations += 1
         response: AIMessage = await llm.ainvoke(messages)
         messages.append(response)
 
+        # Collect symbols from tool calls for state persistence
+        for tc in (response.tool_calls or []):
+            sym = tc.get("args", {}).get("symbol")
+            if sym and sym not in used_symbols:
+                used_symbols.append(sym)
+
         # 沒有 tool_calls → LLM 完成推理，輸出最終答案
         if not response.tool_calls:
-            logger.info(f"ResearchAgent: done after {iterations} iterations")
+            logger.info(f"ResearchAgent: done after {iterations} iterations, symbols={used_symbols}")
             return {
                 "final_report": _extract_text(response.content),
                 "conclusion": _extract_text(response.content)[-600:],
                 "sources": [],
+                "target_symbols": used_symbols,
             }
 
         # 執行 tool calls
         logger.info(f"ResearchAgent iter {iterations}: calling {[tc['name'] for tc in response.tool_calls]}")
         tool_results = await _tool_node.ainvoke({"messages": messages})
-        # ToolNode 回傳 {"messages": [...ToolMessage...]}
         messages.extend(tool_results["messages"])
 
     # 超過最大迭代次數，強制用目前資訊生成報告
@@ -216,4 +283,4 @@ async def research_agent_node(state: AgentState) -> dict:
         HumanMessage(content="根據以上收集到的資料，請直接給出最終分析結論。"),
     ])
     text = _extract_text(final.content)
-    return {"final_report": text, "conclusion": text[-600:], "sources": []}
+    return {"final_report": text, "conclusion": text[-600:], "sources": [], "target_symbols": used_symbols}
