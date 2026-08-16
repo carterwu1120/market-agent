@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # Discord
     discord_bot_token: str = ""
     discord_guild_id: str = ""
+    discord_owner_user_id: str = ""  # your Discord user ID for agent DMs
 
     # Scheduler
     schedule_report_channel_id: str = ""
@@ -52,6 +53,10 @@ class Settings(BaseSettings):
     # News
     newsapi_key: str = ""
     gnews_api_key: str = ""
+
+    # Gmail OAuth
+    gmail_credentials_file: str = "gmail_credentials.json"
+    gmail_token_file: str = "gmail_token.json"
 
     # App
     log_level: str = "INFO"

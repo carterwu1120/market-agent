@@ -40,6 +40,9 @@ dependencies = [
     "sentence-transformers>=3.0.0",
     # Discord bot
     "discord.py>=2.4.0",
+    # Gmail
+    "google-api-python-client>=2.100.0",
+    "google-auth-oauthlib>=1.0.0",
     # Config & utilities
     "pydantic-settings>=2.4.0",
     "python-dotenv>=1.0.0",

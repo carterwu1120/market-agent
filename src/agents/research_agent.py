@@ -26,6 +26,8 @@ from src.tools.theme_search import search_theme_stocks
 from src.tools.stock_data import get_technical_indicators, get_fundamental_data
 from src.tools.chip_data import get_institutional_trading, get_margin_trading
 from src.tools.company_insight import get_company_insights
+from src.tools.discord_tools import send_channel_message, send_dm as _discord_send_dm
+from src.tools.gmail_tools import create_draft as _gmail_create_draft, send_email as _gmail_send_email
 
 MAX_ITERATIONS = 6  # 防止無限循環
 
@@ -174,10 +176,54 @@ async def stock_history(symbol: str, days: int = 7) -> str:
     return "\n".join(lines)
 
 
+@tool
+async def discord_message(channel_id: str, message: str, mention_user_ids: str = "") -> str:
+    """傳訊息到 Discord 頻道。channel_id 為頻道 ID（數字）。mention_user_ids 用逗號分隔多個 Discord user ID，留空則不 @。"""
+    mentions = [uid.strip() for uid in mention_user_ids.split(",") if uid.strip()]
+    result = await send_channel_message(channel_id, message, mention_user_ids=mentions or None)
+    if result.get("error"):
+        return f"Discord 傳送失敗：{result['error']}"
+    return f"訊息已傳送至頻道 {channel_id}（message_id: {result.get('message_id')}）"
+
+
+@tool
+async def discord_dm(user_id: str, message: str) -> str:
+    """私訊 Discord 用戶。user_id 填對方的 Discord user ID；若要私訊主人（bot 擁有者），填 'owner'。"""
+    result = await _discord_send_dm(user_id, message)
+    if result.get("error"):
+        return f"Discord DM 失敗：{result['error']}"
+    return f"私訊已送出（user_id: {result.get('user_id')}，message_id: {result.get('message_id')}）"
+
+
+@tool
+async def gmail_draft(to: str, subject: str, body: str) -> str:
+    """建立 Gmail 草稿。回傳草稿內容供用戶確認，確認後再呼叫 gmail_send 寄出。
+    to: 收件人 email。subject: 主旨。body: 信件內文。"""
+    result = await _gmail_create_draft(to, subject, body)
+    if result.get("error"):
+        return f"草稿建立失敗：{result['error']}"
+    return (
+        f"草稿已建立（draft_id: {result['draft_id']}）\n"
+        f"收件人：{to}\n主旨：{subject}\n\n{body}\n\n"
+        f"請確認內容，說「寄出」後我會呼叫 gmail_send 寄送。"
+    )
+
+
+@tool
+async def gmail_send(to: str, subject: str, body: str) -> str:
+    """直接寄送 Email。通常在用戶確認草稿後才呼叫。
+    to: 收件人 email。subject: 主旨。body: 信件內文。"""
+    result = await _gmail_send_email(to, subject, body)
+    if result.get("error"):
+        return f"寄送失敗：{result['error']}"
+    return f"Email 已寄出至 {to}（message_id: {result.get('message_id')}）"
+
+
 # ── ReAct 系統提示 ──────────────────────────────────────────────────────────
 
-REACT_SYSTEM = """你是一個台股研究分析師，可以使用以下工具收集資料：
+REACT_SYSTEM = """你是一個台股研究分析師兼個人助理，可以使用以下工具：
 
+【資料查詢】
 - sector_lookup(keyword): 查 TWSE 官方產業類股（半導體、航運、金融…）
 - theme_lookup(keyword): 查市場主題/概念股（機器人、AI、電動車…）
 - technical_analysis(symbol): 查個股技術面（RSI、MACD、均線、乖離率…）
@@ -186,10 +232,16 @@ REACT_SYSTEM = """你是一個台股研究分析師，可以使用以下工具�
 - chip_analysis(symbol): 查個股即時籌碼面（三大法人買賣超、融資融券）
 - stock_history(symbol, days): 查個股歷史快照（本系統 DB 記錄，有資料才有）
 
+【訊息發送】
+- discord_message(channel_id, message, mention_user_ids): 傳訊息到 Discord 頻道，可 @ 指定用戶
+- discord_dm(user_id, message): 私訊 Discord 用戶；user_id='owner' 為主人
+- gmail_draft(to, subject, body): 建立 Gmail 草稿並顯示內容供確認
+- gmail_send(to, subject, body): 寄送 Email（用戶確認草稿後才呼叫）
+
 策略：
-1. 先用 sector_lookup 或 theme_lookup 找出相關個股代碼
-2. 再用 technical_analysis / fundamental_analysis 分析具體數據
-3. 收集足夠資料後，直接輸出分析結論，不要再呼叫工具
+1. 股票查詢：先用 sector_lookup 或 theme_lookup 找代碼，再分析數據
+2. 收集足夠資料後，直接輸出分析結論，不要再呼叫工具
+3. Email 流程：先呼叫 gmail_draft 讓用戶確認，用戶說「寄出」後才呼叫 gmail_send
 4. 回答使用繁體中文，每個判斷都要引用工具回傳的數據
 5. 嚴禁使用工具之外的自身知識補充數字或技術描述
 6. 【重要】對話歷史中的數字僅供理解問題脈絡，不可直接引用為當前數據。
@@ -199,7 +251,11 @@ REACT_SYSTEM = """你是一個台股研究分析師，可以使用以下工具�
 
 # ── Agent Node ───────────────────────────────────────────────────────────────
 
-_TOOLS = [sector_lookup, theme_lookup, technical_analysis, fundamental_analysis, chip_analysis, company_news, stock_history]
+_TOOLS = [
+    sector_lookup, theme_lookup, technical_analysis, fundamental_analysis,
+    chip_analysis, company_news, stock_history,
+    discord_message, discord_dm, gmail_draft, gmail_send,
+]
 _tool_node = ToolNode(_TOOLS)
 
 
