@@ -76,7 +76,14 @@ def _best_match(keyword: str, concept_map: dict[str, str]) -> tuple[str, str, fl
 
 
 async def _fetch_concept_stocks(concept_id: str, client: httpx.AsyncClient) -> list[str]:
-    """Fetch stock codes from a CMoney concept page."""
+    """Fetch stock codes from a CMoney concept page.
+
+    The page also links to unrelated stocks in the nav menu, hashtag
+    list, and "related articles" sidebar (classes nav__subItem,
+    articleTags__item, list__item). Only the constituent-stocks table
+    (a.table__stock inside a table__plural cell) is the actual concept
+    membership data — everything else is page chrome/noise.
+    """
     url = f"{CMONEY_BASE}/forum/concept/{concept_id}"
     try:
         r = await client.get(url)
@@ -85,7 +92,7 @@ async def _fetch_concept_stocks(concept_id: str, client: httpx.AsyncClient) -> l
         logger.warning(f"CMoney concept page {concept_id} fetch failed: {exc}")
         return []
     soup = BeautifulSoup(r.text, "lxml")
-    links = soup.find_all("a", href=re.compile(r"^/forum/stock/\d{4}$"))
+    links = soup.find_all("a", class_="table__stock", href=re.compile(r"^/forum/stock/\d{4}$"))
     codes = list(dict.fromkeys(a["href"].split("/")[-1] for a in links))
     return codes
 
