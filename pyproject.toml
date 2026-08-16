@@ -51,6 +51,8 @@ dependencies = [
     "rich>=13.7.0",              # CLI pretty output
     "playwright>=1.60.0",
     "langchain-google-vertexai>=3.2.3",
+    # MCP server (Claude Code agent backend)
+    "mcp>=1.0.0",
 ]
 
 [project.optional-dependencies]

@@ -13,3 +13,4 @@ data/knowledge_base/*.md
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.mcp_market_agent_config.json
