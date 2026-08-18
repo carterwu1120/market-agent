@@ -16,7 +16,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.config import settings
-from src.agents.graph import run_agent
+from src.agents.pipeline import run_agent
 from src.memory.session_store import get_session_messages, append_message, clear_session
 from src.memory.database import try_init_db, AsyncSessionFactory
 from src.memory.conversation_repo import (
@@ -123,12 +123,10 @@ async def _process_and_reply(
             channel_id=channel_id,
             conversation_history=history,
         )
-        report = result.get("final_report", "") if isinstance(result, dict) else getattr(result, "final_report", "")
-        if not report:
-            report = "⚠️ 無法生成報告，請稍後再試。"
-        intent = result.get("intent", "") if isinstance(result, dict) else getattr(result, "intent", "")
-        target_symbols = result.get("target_symbols", []) if isinstance(result, dict) else getattr(result, "target_symbols", [])
-        conclusion = result.get("conclusion", "") if isinstance(result, dict) else getattr(result, "conclusion", "")
+        report = result.get("final_report", "") or "⚠️ 無法生成報告，請稍後再試。"
+        intent = result.get("intent", "")
+        target_symbols = result.get("target_symbols", [])
+        conclusion = result.get("conclusion", "")
     except Exception as exc:
         logger.error(f"Agent pipeline error: {exc}", exc_info=True)
         report = f"⚠️ 系統錯誤：{exc}"

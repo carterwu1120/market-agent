@@ -23,7 +23,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.rule import Rule
 
-from src.agents.graph import run_agent
+from src.agents.pipeline import run_agent
 from src.bot.scheduler import SLOT_PROMPTS
 
 console = Console()
@@ -48,33 +48,13 @@ async def _run(message: str) -> None:
                 channel_id=CLI_CHANNEL_ID,
                 conversation_history=SESSION[-20:],
             )
-            report = (
-                result.get("final_report", "")
-                if isinstance(result, dict)
-                else getattr(result, "final_report", "")
-            )
+            report = result.get("final_report", "")
             if isinstance(report, list):
                 report = "\n".join(str(r) for r in report)
-            sources = (
-                result.get("sources", [])
-                if isinstance(result, dict)
-                else getattr(result, "sources", [])
-            )
-            intent = (
-                result.get("intent", "")
-                if isinstance(result, dict)
-                else getattr(result, "intent", "")
-            )
-            target_symbols = (
-                result.get("target_symbols", [])
-                if isinstance(result, dict)
-                else getattr(result, "target_symbols", [])
-            )
-            conclusion = (
-                result.get("conclusion", "")
-                if isinstance(result, dict)
-                else getattr(result, "conclusion", "")
-            )
+            sources = result.get("sources", [])
+            intent = result.get("intent", "")
+            target_symbols = result.get("target_symbols", [])
+            conclusion = result.get("conclusion", "")
         except Exception as exc:
             report = f"⚠️ 錯誤：{exc}"
             sources = []

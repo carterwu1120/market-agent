@@ -17,7 +17,7 @@ from discord.ext import tasks
 from loguru import logger
 
 from src.config import settings
-from src.agents.graph import run_agent
+from src.agents.pipeline import run_agent
 from src.bot.discord_bot import chunk_message
 
 SLOT_PROMPTS = {
@@ -56,13 +56,7 @@ async def _send_scheduled_report(slot: str) -> None:
             user_id=settings.schedule_user_id,
             channel_id=settings.schedule_report_channel_id,
         )
-        report = (
-            result.get("final_report", "")
-            if isinstance(result, dict)
-            else getattr(result, "final_report", "")
-        )
-        if not report:
-            report = "⚠️ 無法生成排程報告，請稍後再試。"
+        report = result.get("final_report", "") or "⚠️ 無法生成排程報告，請稍後再試。"
     except Exception as exc:
         logger.error(f"Scheduler [{slot}] agent error: {exc}", exc_info=True)
         report = f"⚠️ 排程報告錯誤：{exc}"

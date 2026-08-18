@@ -15,7 +15,6 @@ import re
 
 from loguru import logger
 
-from src.agents.state import AgentState
 from src.llm_claude_code import claude_code_research
 
 REACT_SYSTEM = """你是一個台股研究分析師兼個人助理，可以使用以下工具：
@@ -49,12 +48,12 @@ REACT_SYSTEM = """你是一個台股研究分析師兼個人助理，可以使�
 _SYMBOL_RE = re.compile(r"\b\d{4}\.TW\b")
 
 
-async def research_agent_node(state: AgentState) -> dict:
+async def run_research(user_message: str, conversation_history: list[dict]) -> dict:
     """ReAct loop：Claude Code 自主決定呼叫哪些 MCP 工具直到得出結論。"""
     logger.info("ResearchAgent: starting ReAct loop (claude_code MCP backend)")
 
     history = []
-    for m in (state.conversation_history or [])[-6:]:
+    for m in (conversation_history or [])[-6:]:
         if m.get("role") not in ("user", "assistant"):
             continue
         content = m.get("content", "")
@@ -64,7 +63,7 @@ async def research_agent_node(state: AgentState) -> dict:
             content = f"[分析標的: {', '.join(symbols)}]\n{content}"
         history.append({"role": m["role"], "content": content})
 
-    text = await claude_code_research(REACT_SYSTEM, history, state.user_message)
+    text = await claude_code_research(REACT_SYSTEM, history, user_message)
     used_symbols = list(dict.fromkeys(_SYMBOL_RE.findall(text)))
     logger.info(f"ResearchAgent: done, symbols={used_symbols}")
     return {"final_report": text, "conclusion": text[-600:], "sources": [], "target_symbols": used_symbols}

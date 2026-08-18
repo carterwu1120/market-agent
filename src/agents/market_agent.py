@@ -1,19 +1,15 @@
-"""Market Agent — runs after news_agent for daily_brief.
+"""Hot-stock extraction helpers, used by daily_brief.py.
 
-Responsibilities:
-1. Fetch major market indices (台股、S&P500、NASDAQ、DJI)
-2. Extract 5-8 hot Taiwan stock symbols from today's news via LLM
+Extracts 5-8 hot Taiwan stock symbols from today's news via LLM, from a
+candidate list built deterministically from the TWSE ticker universe.
 """
 
-import asyncio
 import json
 import re
 from dataclasses import asdict
 from loguru import logger
 
-from src.agents.state import AgentState
 from src.llm_claude_code import claude_code_chat
-from src.tools.stock_data import get_market_indices
 
 
 _EXTRACT_SYSTEM = """你是台股選股助理。從候選個股清單中，挑出今日新聞最熱門的台灣上市/上櫃個股。
@@ -168,49 +164,3 @@ async def _extract_hot_stocks(news_articles: list[dict]) -> list[str]:
     except Exception as exc:
         logger.warning(f"MarketAgent: hot stock extraction failed: {exc}")
         return []
-
-
-async def market_agent_node(state: AgentState) -> dict:
-    logger.info("MarketAgent: fetching indices + extracting hot stocks")
-
-    news_articles = _normalize_articles(state.news_articles)
-
-    if not news_articles and state.news_cached:
-        from src.memory.news_cache import load_news_cache
-        cached = await load_news_cache()
-        if cached:
-            news_articles = _normalize_articles(cached)
-            logger.info(f"MarketAgent: loaded {len(news_articles)} articles from cache")
-        else:
-            logger.warning("MarketAgent: cache load returned empty, falling back to fresh news fetch")
-            from src.tools.news_fetcher import fetch_all_news
-            from src.memory.news_cache import save_news_cache
-            try:
-                raw = await fetch_all_news()
-                news_articles = _normalize_articles(raw)
-                if news_articles:
-                    await save_news_cache(news_articles)
-                    logger.info(f"MarketAgent: fetched {len(news_articles)} articles as fallback")
-            except Exception as exc:
-                logger.error(f"MarketAgent: fallback news fetch failed: {exc}")
-
-            if not news_articles:
-                # Both cache and fresh fetch failed — surface this as an explicit error
-                indices = await get_market_indices()
-                return {
-                    "market_indices": indices,
-                    "target_symbols": [],
-                    "news_articles": [],
-                    "error": "每日摘要新聞來源暫時無法取得（Redis 快取與備援新聞擷取均失敗），股票分析略過。",
-                }
-
-    indices, hot_symbols = await asyncio.gather(
-        get_market_indices(),
-        _extract_hot_stocks(news_articles),
-    )
-
-    return {
-        "market_indices": indices,
-        "target_symbols": hot_symbols,
-        "news_articles": news_articles if not state.news_articles else [],
-    }

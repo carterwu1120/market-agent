@@ -1,6 +1,6 @@
 # Market Agent
 
-台股智慧分析 Discord Bot，基於 **LangGraph multi-agent 架構**，整合即時新聞、技術面、基本面、籌碼面與社群訊號，生成有數據來源的投資分析報告。
+台股智慧分析 Discord Bot，整合即時新聞、技術面、基本面、籌碼面與社群訊號，生成有數據來源的投資分析報告。
 
 > **每一筆數據都標注來源，不憑空生成數字。**
 
@@ -24,13 +24,9 @@
 
 ---
 
-## Multi-Agent 架構
+## 架構
 
-Multi-agent 的核心定義在 **[`src/agents/graph.py`](src/agents/graph.py)**，使用 **LangGraph `StateGraph`** 實作。
-
-### 流程圖
-
-系統有**兩條執行路徑**，由 orchestrator 根據問題類型決定走哪條：
+系統只有**兩條執行路徑**，由 [`pipeline.py`](src/agents/pipeline.py) 的 `classify_intent()` 決定走哪條 —— 沒有 graph 框架，就是一個 `if/else`：
 
 ```mermaid
 flowchart TD
@@ -39,62 +35,50 @@ flowchart TD
         PG["PostgreSQL\n長期記憶 · RAG 知識庫向量"]
     end
 
-    USER([使用者輸入]) --> ORCH
+    USER([使用者輸入]) --> CLS
 
-    MEM -->|注入 conversation_history| ORCH
+    MEM -->|注入 conversation_history| CLS
 
-    ORCH["Orchestrator\nLLM 分類 intent\ndaily_brief / stock_query / sector_query\ntheme_query / research / follow_up"]
+    CLS["classify_intent()\n關鍵字快速判斷 + LLM fallback\ndaily_brief / react"]
 
-    ORCH -->|intent = research| RA
-    ORCH -->|其他 intent\nfan-out 並行| NA & TA & FA & CA & SA & RAGA
+    CLS -->|react| RA
+    CLS -->|daily_brief| DB
 
-    subgraph RA["research_agent（ReAct Loop）"]
-        LLM_R["LLM 自主決定\n呼叫哪些工具"] -->|tool_calls| TN["ToolNode\n5 種工具"]
-        TN -->|工具結果| LLM_R
+    subgraph RA["run_research()（Claude Code 原生 ReAct）"]
+        LLM_R["Claude Code 自主決定\n呼叫哪些 MCP 工具"] -->|tool_calls| MCP["src/mcp_server.py\n11 種工具"]
+        MCP -->|工具結果| LLM_R
     end
 
-    NA["news_agent\n爬取近 24h 新聞並摘要"]
-    TA["technical_agent\n抓股價計算 RSI/MACD/均線/乖離率"]
-    FA["fundamental_agent\n抓 PE/ROE/EPS 等基本面數據"]
-    CA["chip_agent\n抓三大法人買賣超"]
-    SA["social_agent\n爬 PTT 擷取社群情緒訊號"]
-    RAGA["rag_agent\n向量搜尋知識庫取得相關背景知識"]
+    subgraph DB["run_daily_brief()（固定平行抓取，非 LLM 決策）"]
+        NEWS["新聞快取/爬取\n+ 熱門股萃取"] --> FANOUT
+        FANOUT["asyncio.gather 平行執行"] --> TA["技術面"] & FA["基本面"] & CA["籌碼面"] & SA["社群訊號"] & RAGA["RAG 知識庫"]
+        TA & FA & CA & SA & RAGA --> SYN["write_report()\nLLM 整合報告 · 解析 conclusion"]
+    end
 
-    NA & TA & FA & CA & SA & RAGA --> SYN
-
-    SYN["Synthesizer\nLLM 整合報告\n解析 conclusion"]
-
-    RA -->|直接輸出，不經 synthesizer| END([最終報告\n儲存 symbols · intent · conclusion → Redis])
+    RA -->|直接輸出| END([最終報告\n儲存 symbols · intent · conclusion → Redis])
     SYN --> END
 ```
 
 ### 兩條路徑的關鍵差異
 
-| | **一般查詢路徑** | **ReAct 研究路徑** |
+| | **daily_brief** | **react** |
 |--|--|--|
-| 觸發條件 | 單一明確問題（「台積電分析」「半導體類股」）| 複雜/比較型問題（「比較兩個產業」「找最強的股」）|
-| 執行方式 | 固定 fan-out，所有 agent 並行跑完 | LLM 自主決定呼叫哪些工具、幾次 |
-| 工具決策者 | Python 函數 `_route_after_orchestrator` | LLM 本身（ReAct loop）|
-| 報告生成 | synthesizer 整合所有 agent 的結果 | research_agent 直接輸出 |
-| 速度 | 快（固定路徑）| 較慢（動態迭代，最多 6 輪）|
+| 觸發條件 | 明確要每日市場摘要（「早安」「盤前」「今日總結」等關鍵字，且沒有提到股票/題材）| 其他所有問題：個股、產業、主題、歷史、比較、follow-up |
+| 執行方式 | 固定平行抓取全部 6 種資料來源，**不經過 LLM 決定要抓什麼** | Claude Code 自主決定呼叫哪些 MCP 工具、呼叫幾次 |
+| 為什麼要分開 | 排程無人值守（08:30/12:00/14:30），`claude -p` 沒有強制呼叫工具的機制，讓 LLM 自己決定「要不要查」有靜默漏查的風險——見 [ADR 0001](docs/adr/0001-drop-langgraph-delegate-to-claude-code.md) | 已經是 Claude Code 原生 agentic loop，沒有再包一層決策的必要 |
+| 報告生成 | `write_report()` 整合所有資料呼叫 LLM 寫報告 | Claude Code 直接輸出，不經過 synthesizer |
 
-### 各 Agent 說明
+### 檔案對應
 
-#### Graph Nodes（LangGraph 上的節點）
+| 檔案 | 職責 |
+|------|------|
+| [`pipeline.py`](src/agents/pipeline.py) | intent 分類（規則 + LLM fallback）、`run_agent()` 對外入口、錯誤處理 |
+| [`daily_brief.py`](src/agents/daily_brief.py) | daily_brief 的固定抓取流程：新聞、熱門股萃取、技術/基本面/籌碼/社群/RAG 平行抓取 |
+| [`research_agent.py`](src/agents/research_agent.py) | react 的 ReAct 迴圈，組裝對話歷史後交給 Claude Code 原生 tool-calling |
+| [`synthesizer.py`](src/agents/synthesizer.py) | `write_report()`：把 daily_brief 蒐集到的資料整理成表格 + 呼叫 LLM 生成分析文字 |
+| [`market_agent.py`](src/agents/market_agent.py) | 熱門股萃取用的輔助函數（TWSE 代號表快取、候選股篩選、LLM 選股）|
 
-| 檔案 | 層級 | 職責 | 數據來源 |
-|------|------|------|---------|
-| [`orchestrator.py`](src/agents/orchestrator.py) | 入口 | intent 分類 + ticker/sector 提取 + 路由決策 | LLM + Redis |
-| [`research_agent.py`](src/agents/research_agent.py) | 決策層（ReAct）| 複雜問題的 ReAct loop，LLM 自主呼叫工具直到得出結論 | LLM + 內建工具 |
-| [`news_agent.py`](src/agents/news_agent.py) | 執行層 | 抓取近 24h 新聞（Redis 快取命中時跳過）| RSS / NewsAPI / GNews |
-| [`technical_agent.py`](src/agents/technical_agent.py) | 執行層 | RSI、MACD、MA20/60、乖離率、BB + 法說會新聞 | yfinance + pandas-ta + 鉅亨網 |
-| [`fundamental_agent.py`](src/agents/fundamental_agent.py) | 執行層 | PE、PB、EPS、ROE、分析師評等 | Yahoo Finance |
-| [`chip_agent.py`](src/agents/chip_agent.py) | 執行層 | 三大法人買賣超 ✅ / 融資融券 ⚠️ | TWSE 公開 API |
-| [`social_agent.py`](src/agents/social_agent.py) | 執行層 | PTT 關鍵字訊號 | PTT Stock |
-| [`rag_agent.py`](src/agents/rag_agent.py) | 執行層 | 知識庫向量搜尋 | pgvector |
-| [`synthesizer.py`](src/agents/synthesizer.py) | 整合層 | 整合所有 agent 結果，呼叫 LLM 生成報告 | 所有執行層 |
-
-#### research_agent 內建工具（不是 graph nodes，是 ReAct 內部工具）
+### research_agent 呼叫的 MCP 工具
 
 | 工具函數 | 對應的底層工具 |
 |---------|-------------|
@@ -104,46 +88,7 @@ flowchart TD
 | `fundamental_analysis(symbol)` | `stock_data.get_fundamental_data()` |
 | `company_news(symbol)` | `company_insight.get_company_insights()` |
 
-> **重要**：這些工具只存在於 `research_agent` 內部，不是 LangGraph graph 上的獨立節點。`research_agent` 是唯一有決策能力的節點，其他執行層 agent 只做固定的一件事。
-
-### LangGraph 核心概念（對應程式碼）
-
-```python
-# src/agents/graph.py
-
-builder = StateGraph(AgentState)          # 共享狀態定義於 state.py
-
-builder.set_entry_point("orchestrator")
-
-# Conditional fan-out：根據 intent 與 cache 狀態決定啟動哪些 agent
-builder.add_conditional_edges(
-    "orchestrator",
-    _route_after_orchestrator,            # 回傳要執行的 node 名稱列表
-    {node: node for node in _ALL_DATA_AGENTS},
-)
-
-# 所有 data agent 完成後 → synthesizer（自動 join）
-for node in _ALL_DATA_AGENTS:
-    builder.add_edge(node, "synthesizer")
-```
-
-**動態 routing**：`_route_after_orchestrator` 根據 `state.news_cached` 決定是否把 `news_agent` 加入 fan-out 清單。Redis 有新聞快取（TTL 30 分鐘）時，orchestrator 直接跳過 news_agent，節省 20–30 秒爬蟲時間。這是 LangGraph 相較傳統靜態 pipeline 的核心優勢：**每次執行的圖路徑可依 runtime 狀態動態調整**。
-
-**共享狀態**（[`state.py`](src/agents/state.py)）：所有 agent 讀寫同一個 `AgentState`，使用 `operator.add` reducer 讓各 agent 的結果自動 append 合併，不互相覆蓋。
-
-### 動態路由流程圖
-
-```
-第一次查詢（無快取）：
-orchestrator → [news_agent, technical_agent, chip_agent, ...] → synthesizer
-                      ↓
-               爬蟲 + 存 Redis（TTL 30 min）
-
-30 分鐘內再次查詢（快取命中）：
-orchestrator → [technical_agent, chip_agent, social_agent, rag_agent] → synthesizer
-                      ↑
-               news_agent 被跳過，synthesizer 直接從 Redis 讀新聞
-```
+> 完整清單（含 Discord/Gmail 訊息工具）見 [`src/mcp_server.py`](src/mcp_server.py)。
 
 ---
 
@@ -253,7 +198,7 @@ python -m src.cli
 
 | 用途 | 函數 | 機制 | 使用位置 |
 |------|------|------|---------|
-| 單次分類/擷取/報告生成（無工具） | `claude_code_chat()` | `claude -p --tools ""`，純文字 in/out | orchestrator（intent 分類）、market_agent（熱門股擷取）、synthesizer（報告生成）|
+| 單次分類/擷取/報告生成（無工具） | `claude_code_chat()` | `claude -p --tools ""`，純文字 in/out | pipeline（intent 分類）、market_agent（熱門股擷取）、synthesizer（報告生成）|
 | 需要即時查資料的 ReAct 迴圈 | `claude_code_research()` | `claude -p --mcp-config`，Claude Code 用原生 MCP tool-calling 呼叫 [`src/mcp_server.py`](src/mcp_server.py) 暴露的 11 個工具 | research_agent |
 
 > **為什麼分兩種**：早期曾嘗試用純文字 prompt 要求 `claude -p` 輸出 `{"action": "...", "args": {...}}` 這種自訂 JSON 協議來模擬 tool-calling，實測約 30–40% 時候會失敗——`claude -p` 背後是完整的 agent runtime，不是單純的文字補全 API，遇到「不確定工具是否真的存在」的情境會自行幻想/扮演整個工具呼叫與回傳結果。改用真正的 MCP tool-calling 後，這個失敗模式完全消失（測試中連續 10/10 次正確執行，含多工具串接）。單次分類這類「不需要工具」的呼叫則沒有這個問題，維持純文字 `claude -p` 即可穩定運作。
@@ -279,16 +224,11 @@ market-agent/
     ├── llm_claude_code.py       # Claude Code CLI 後端（claude_code_chat / claude_code_research）
     ├── mcp_server.py            # MCP server：暴露 11 個工具給 claude -p --mcp-config 呼叫
     ├── agents/
-    │   ├── graph.py             # ★ LangGraph 圖定義（核心）
-    │   ├── state.py             # 共享狀態 AgentState
-    │   ├── orchestrator.py      # 路由 agent
-    │   ├── news_agent.py
-    │   ├── technical_agent.py
-    │   ├── fundamental_agent.py
-    │   ├── chip_agent.py
-    │   ├── social_agent.py
-    │   ├── rag_agent.py
-    │   └── synthesizer.py       # 最終報告生成
+    │   ├── pipeline.py          # ★ intent 分類 + run_agent() 對外入口
+    │   ├── daily_brief.py       # daily_brief 固定平行抓取流程
+    │   ├── research_agent.py    # react 的 ReAct 迴圈（交給 Claude Code）
+    │   ├── market_agent.py      # 熱門股萃取輔助函數
+    │   └── synthesizer.py       # write_report()：整合資料 + 生成報告
     ├── tools/                   # 各數據源工具函數
     │   ├── news_fetcher.py      # RSS + NewsAPI
     │   ├── stock_data.py        # yfinance（價格、技術、基本面）
@@ -313,11 +253,10 @@ market-agent/
 
 ## 擴充指引
 
-### 新增一個 Agent
+### 新增一個資料來源
 
-1. 在 [`src/agents/`](src/agents/) 建立新檔案，實作 `async def your_agent_node(state: AgentState) -> dict`
-2. 在 [`graph.py`](src/agents/graph.py) `build_graph()` 加入 `builder.add_node()`
-3. 把新 agent 加入 `_ALL_DATA_AGENTS` 或在 `_route_after_orchestrator` 中指定觸發條件
+- **daily_brief 要用**：在 [`daily_brief.py`](src/agents/daily_brief.py) 加一個新的 `async def _xxx(symbols)` 抓取函數，加進 `run_daily_brief()` 的 `asyncio.gather()` fan-out，並在 [`synthesizer.py`](src/agents/synthesizer.py) 的 `write_report()` 加對應參數與 `_summarize_xxx()` 表格函數
+- **react 要用**：不需要碰 `daily_brief.py`，直接看下面「新增一個 MCP 工具」
 
 ### 新增知識庫文件
 
@@ -328,7 +267,7 @@ python scripts/init_knowledge_base.py
 
 ### 新增 Telegram 支援
 
-在 `src/bot/` 建立 `telegram_bot.py`，直接呼叫 `from src.agents.graph import run_agent`，agent 核心完全共用。
+在 `src/bot/` 建立 `telegram_bot.py`，直接呼叫 `from src.agents.pipeline import run_agent`，agent 核心完全共用。
 
 ### 新增一個 MCP 工具（給 Claude Code ReAct 用）
 
@@ -347,7 +286,7 @@ python scripts/init_knowledge_base.py
 
 | 層 | 技術 |
 |----|------|
-| Agent 編排 | LangGraph 0.2+ |
+| Agent 編排 | 純 asyncio（daily_brief 固定 fan-out）+ Claude Code 原生 ReAct（react） |
 | LLM | Claude Code CLI（`claude -p` + MCP tool-calling） |
 | 股票數據 | yfinance, pandas-ta |
 | 台股籌碼 | TWSE 公開 API, goodinfo scraper |
