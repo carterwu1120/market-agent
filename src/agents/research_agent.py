@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 from typing import Any
 
@@ -24,6 +23,7 @@ from loguru import logger
 from src.agents.state import AgentState
 from src.llm import get_langchain_llm
 from src.llm_claude_code import claude_code_research
+from src.llm_router import use_claude_code_backend
 from src.tools.sector_data import get_sector_symbols
 from src.tools.theme_search import search_theme_stocks
 from src.tools.stock_data import get_technical_indicators, get_fundamental_data
@@ -260,10 +260,6 @@ REACT_SYSTEM = """你是一個台股研究分析師兼個人助理，可以使�
 _SYMBOL_RE = re.compile(r"\b\d{4}\.TW\b")
 
 
-def _use_claude_code_backend() -> bool:
-    return os.getenv("RESEARCH_AGENT_BACKEND", "").lower() == "claude_code"
-
-
 async def _run_claude_code_research(state: AgentState) -> dict:
     history = []
     for m in (state.conversation_history or [])[-6:]:
@@ -313,7 +309,7 @@ async def research_agent_node(state: AgentState) -> dict:
     """ReAct loop：LLM 自主決定呼叫哪些工具直到得出結論。"""
     logger.info("ResearchAgent: starting ReAct loop")
 
-    if _use_claude_code_backend():
+    if use_claude_code_backend():
         logger.info("ResearchAgent: using claude_code MCP backend")
         return await _run_claude_code_research(state)
 

@@ -1,14 +1,21 @@
-"""Research agent backend via local Claude Code CLI + MCP tools.
+"""LLM backend via local Claude Code CLI — no metered API key required.
 
-Uses `claude -p --mcp-config ...` so Claude Code drives the ReAct loop
-with its own native tool-calling against src/mcp_server.py — no
-hand-rolled JSON-action text protocol. Billed against the Claude Code
-subscription's included usage rather than a metered API key.
+Two call shapes, matching the two ways this codebase talks to an LLM:
 
-This intentionally does NOT try to make `claude -p` behave like a bare
-text-completion API (that was tried and is unreliable — see git log).
-Instead it leans into what Claude Code actually is: an agent you hand
-a goal and a toolset, and it runs its own loop to a final answer.
+- claude_code_chat: bare system+user prompt -> text. No tools bound, no
+  agentic loop. Used for single-shot classification/extraction/synthesis
+  (orchestrator intent routing, market_agent hot-stock extraction,
+  synthesizer report generation) — the same shape as the LiteLLM
+  llm_chat() it replaces. This is reliable because there's no tool
+  protocol for the model to roleplay around.
+
+- claude_code_research: hands Claude Code the src/mcp_server.py MCP
+  tools and lets it run its own ReAct loop. Used only where real tool
+  use is needed (research_agent). An earlier attempt drove claude -p
+  with a hand-rolled JSON-action text protocol instead of MCP — that
+  was ~30-40% unreliable because claude -p is a full agent runtime and
+  would roleplay fake tool results rather than emit plain JSON. Real
+  MCP tool-calling removed that failure mode.
 """
 
 from __future__ import annotations
@@ -52,8 +59,8 @@ def _allowed_tools(tool_names: list[str]) -> str:
     return ",".join(f"mcp__{MCP_SERVER_NAME}__{name}" for name in tool_names)
 
 
-def _render_prompt(system: str, history: list[dict], user_message: str) -> str:
-    parts = [system, ""]
+def _render_prompt(history: list[dict], user_message: str) -> str:
+    parts = []
     for m in history:
         role = "使用者" if m.get("role") == "user" else "你（先前回覆）"
         parts.append(f"[{role}]\n{m.get('content', '')}")
@@ -61,31 +68,7 @@ def _render_prompt(system: str, history: list[dict], user_message: str) -> str:
     return "\n\n".join(parts)
 
 
-async def claude_code_research(
-    system: str,
-    history: list[dict],
-    user_message: str,
-    tool_names: list[str] = ALL_TOOL_NAMES,
-    timeout: int = DEFAULT_TIMEOUT_SECONDS,
-) -> str:
-    """Run one Claude Code agentic turn with MCP tools bound.
-
-    Claude Code runs its own internal tool-calling loop (may invoke
-    several MCP tools before answering) and returns the final text.
-    """
-    prompt = _render_prompt(system, history, user_message)
-    mcp_config_path = PROJECT_ROOT / ".mcp_market_agent_config.json"
-    mcp_config_path.write_text(json.dumps(_mcp_config()))
-
-    cmd = [
-        CLAUDE_BIN, "-p", prompt,
-        "--output-format", "json",
-        "--mcp-config", str(mcp_config_path),
-        "--allowedTools", _allowed_tools(tool_names),
-    ]
-
-    logger.debug(f"claude_code_research: invoking CLI (prompt_len={len(prompt)})")
-
+async def _run_claude_cli(cmd: list[str], timeout: int) -> dict:
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -110,12 +93,65 @@ async def claude_code_research(
     if payload.get("is_error"):
         raise ClaudeCodeError(f"claude CLI returned error: {payload.get('result')}")
 
+    logger.debug(
+        f"claude CLI: cost=${payload.get('total_cost_usd', 0):.4f} turns={payload.get('num_turns')}"
+    )
+    return payload
+
+
+async def claude_code_chat(
+    messages: list[dict],
+    system: str = "",
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> str:
+    """Single non-agentic `claude -p` call: system+user prompt -> text.
+
+    No tools bound (--tools ""). Drop-in replacement for llm_chat()'s
+    call shape — used for classification/extraction/synthesis prompts
+    that don't need tool use.
+    """
+    history = [m for m in messages if m.get("role") in ("user", "assistant")]
+    user_message = history[-1]["content"] if history and history[-1]["role"] == "user" else ""
+    prior = history[:-1] if user_message else history
+    prompt = _render_prompt(prior, user_message) if prior else user_message
+
+    cmd = [CLAUDE_BIN, "-p", prompt, "--output-format", "json", "--tools", ""]
+    if system:
+        cmd += ["--system-prompt", system]
+
+    logger.debug(f"claude_code_chat: invoking CLI (prompt_len={len(prompt)})")
+    payload = await _run_claude_cli(cmd, timeout)
+    return payload.get("result", "")
+
+
+async def claude_code_research(
+    system: str,
+    history: list[dict],
+    user_message: str,
+    tool_names: list[str] = ALL_TOOL_NAMES,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> str:
+    """Run one Claude Code agentic turn with MCP tools bound.
+
+    Claude Code runs its own internal tool-calling loop (may invoke
+    several MCP tools before answering) and returns the final text.
+    """
+    prompt = system + "\n\n" + _render_prompt(history, user_message)
+    mcp_config_path = PROJECT_ROOT / ".mcp_market_agent_config.json"
+    mcp_config_path.write_text(json.dumps(_mcp_config()))
+
+    cmd = [
+        CLAUDE_BIN, "-p", prompt,
+        "--output-format", "json",
+        "--mcp-config", str(mcp_config_path),
+        "--allowedTools", _allowed_tools(tool_names),
+    ]
+
+    logger.debug(f"claude_code_research: invoking CLI (prompt_len={len(prompt)})")
+    payload = await _run_claude_cli(cmd, timeout)
+
     denials = payload.get("permission_denials") or []
     if denials:
         logger.warning(f"claude_code_research: {len(denials)} tool permission denials: {denials}")
 
-    logger.debug(
-        f"claude_code_research: cost=${payload.get('total_cost_usd', 0):.4f} "
-        f"turns={payload.get('num_turns')}"
-    )
     return payload.get("result", "")

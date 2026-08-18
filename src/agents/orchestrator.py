@@ -9,6 +9,8 @@ from loguru import logger
 
 from src.agents.state import AgentState
 from src.llm import llm_chat
+from src.llm_claude_code import claude_code_chat
+from src.llm_router import use_claude_code_backend
 from src.memory.news_cache import has_fresh_news
 
 _BRIEF_KEYWORDS = ["早安", "盤前", "今日總結", "市場摘要", "每日簡報", "今天市場概況", "大盤今天"]
@@ -61,13 +63,19 @@ async def orchestrator_node(state: AgentState) -> dict:
     else:
         try:
             import json
-            raw = await llm_chat(
-                messages=[
-                    {"role": "system", "content": INTENT_SYSTEM},
-                    {"role": "user", "content": msg},
-                ],
-                temperature=0.1,
-            )
+            if use_claude_code_backend():
+                raw = await claude_code_chat(
+                    messages=[{"role": "user", "content": msg}],
+                    system=INTENT_SYSTEM,
+                )
+            else:
+                raw = await llm_chat(
+                    messages=[
+                        {"role": "system", "content": INTENT_SYSTEM},
+                        {"role": "user", "content": msg},
+                    ],
+                    temperature=0.1,
+                )
             raw = re.sub(r"```(?:json)?|```", "", raw).strip()
             parsed = json.loads(raw)
             intent = parsed.get("intent", "react")

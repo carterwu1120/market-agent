@@ -1,7 +1,9 @@
-"""LLM abstraction layer via LiteLLM.
+"""LLM abstraction layer via LiteLLM — cloud-API fallback path.
 
-Supports Ollama, vLLM (OpenAI-compatible), OpenAI, and Gemini.
-Switch provider by changing LLM_PROVIDER in .env — no code changes needed.
+Only used when settings.llm_backend != "claude_code" (see src/llm_router.py
+and src/llm_claude_code.py for the default, no-API-key backend).
+Supports OpenAI, Gemini, and Vertex AI. Switch provider via LLM_PROVIDER
+in .env.
 """
 
 from typing import Any
@@ -20,16 +22,12 @@ litellm.suppress_debug_info = True
 def _litellm_model_string() -> str:
     """Return the LiteLLM model identifier for the configured provider."""
     match settings.llm_provider:
-        case "ollama":
-            return f"ollama/{settings.llm_model}"
         case "openai":
             return settings.llm_model
         case "gemini":
             return f"gemini/{settings.llm_model}"
         case "vertex":
             return f"vertex_ai/{settings.llm_model}"
-        case "vllm":
-            return f"openai/{settings.llm_model}"
         case _:
             raise ValueError(f"Unknown LLM provider: {settings.llm_provider}")
 
@@ -38,11 +36,6 @@ def _litellm_kwargs() -> dict[str, Any]:
     """Extra kwargs passed to every LiteLLM call."""
     kwargs: dict[str, Any] = {}
     match settings.llm_provider:
-        case "ollama":
-            kwargs["api_base"] = settings.ollama_base_url
-        case "vllm":
-            kwargs["api_base"] = settings.vllm_base_url
-            kwargs["api_key"] = "dummy"
         case "openai":
             kwargs["api_key"] = settings.openai_api_key
         case "gemini":
@@ -68,18 +61,6 @@ async def llm_chat(messages: list[dict], temperature: float = 0.3, **kwargs) -> 
 def get_langchain_llm(temperature: float = 0.3) -> BaseChatModel:
     """Return a LangChain-compatible LLM for use inside LangGraph agents."""
     match settings.llm_provider:
-        case "ollama" | "vllm":
-            base_url = (
-                settings.ollama_base_url
-                if settings.llm_provider == "ollama"
-                else settings.vllm_base_url
-            )
-            return ChatOpenAI(
-                model=settings.llm_model,
-                base_url=f"{base_url}/v1",
-                api_key="ollama",  # placeholder, not validated
-                temperature=temperature,
-            )
         case "openai":
             return ChatOpenAI(
                 model=settings.llm_model,

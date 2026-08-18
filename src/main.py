@@ -17,34 +17,14 @@ def setup_logging():
     logger.add("logs/market_agent.log", rotation="10 MB", retention="7 days", level="DEBUG")
 
 
-async def pull_ollama_model():
-    """Ensure the configured Ollama model is available."""
-    if settings.llm_provider != "ollama":
-        return
-    import httpx
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"{settings.ollama_base_url}/api/tags")
-            models = [m["name"] for m in resp.json().get("models", [])]
-            if settings.llm_model not in models:
-                logger.info(f"Pulling Ollama model: {settings.llm_model}")
-                await client.post(
-                    f"{settings.ollama_base_url}/api/pull",
-                    json={"name": settings.llm_model},
-                    timeout=600,
-                )
-    except Exception as exc:
-        logger.warning(f"Could not verify Ollama model: {exc}")
-
-
 def main():
     setup_logging()
-    logger.info(f"Starting Market Agent | LLM: {settings.llm_provider}/{settings.llm_model}")
+    backend_label = settings.llm_backend if settings.llm_backend == "claude_code" else f"{settings.llm_backend}/{settings.llm_model}"
+    logger.info(f"Starting Market Agent | LLM: {backend_label}")
 
     async def _start():
         from src.memory.database import try_init_db
         await try_init_db()
-        await pull_ollama_model()
         from src.bot.discord_bot import bot
         from src.config import settings
         await bot.start(settings.discord_bot_token)

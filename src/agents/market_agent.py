@@ -13,6 +13,8 @@ from loguru import logger
 
 from src.agents.state import AgentState
 from src.llm import llm_chat
+from src.llm_claude_code import claude_code_chat
+from src.llm_router import use_claude_code_backend
 from src.tools.stock_data import get_market_indices
 
 
@@ -147,17 +149,24 @@ async def _extract_hot_stocks(news_articles: list[dict]) -> list[str]:
     )
     candidate_str = ", ".join(candidates)
 
+    user_content = (
+        f"候選清單（只能從這裡選）：[{candidate_str}]\n\n"
+        f"今日新聞標題：\n{titles}"
+    )
     try:
-        raw = await llm_chat(
-            messages=[
-                {"role": "system", "content": _EXTRACT_SYSTEM},
-                {"role": "user", "content": (
-                    f"候選清單（只能從這裡選）：[{candidate_str}]\n\n"
-                    f"今日新聞標題：\n{titles}"
-                )},
-            ],
-            temperature=0.1,
-        )
+        if use_claude_code_backend():
+            raw = await claude_code_chat(
+                messages=[{"role": "user", "content": user_content}],
+                system=_EXTRACT_SYSTEM,
+            )
+        else:
+            raw = await llm_chat(
+                messages=[
+                    {"role": "system", "content": _EXTRACT_SYSTEM},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0.1,
+            )
         raw = re.sub(r"```(?:json)?|```", "", raw).strip()
         codes = json.loads(raw)
         candidate_set = set(candidates)

@@ -5,11 +5,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # LLM
-    llm_provider: Literal["ollama", "openai", "gemini", "vertex", "vllm"] = "ollama"
-    llm_model: str = "llama3.1:8b"
-    ollama_base_url: str = "http://localhost:11434"
-    vllm_base_url: str = "http://localhost:8000"
+    # LLM backend
+    # "claude_code": drive `claude -p` (Claude Code CLI) — billed against the
+    #   Claude Code subscription, no metered API key needed. Default.
+    # "openai" | "gemini" | "vertex": LiteLLM against a cloud API key, kept as
+    #   a fallback for anyone who wants a metered-key setup instead.
+    llm_backend: Literal["claude_code", "openai", "gemini", "vertex"] = "claude_code"
+    llm_provider: Literal["openai", "gemini", "vertex"] = "openai"  # only used when llm_backend != claude_code
+    llm_model: str = "gpt-4o-mini"
     openai_api_key: str = ""
     gemini_api_key: str = ""
     google_cloud_project: str = ""
