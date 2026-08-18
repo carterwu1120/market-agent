@@ -5,21 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # LLM backend
-    # "claude_code": drive `claude -p` (Claude Code CLI) — billed against the
-    #   Claude Code subscription, no metered API key needed. Default.
-    # "openai" | "gemini" | "vertex": LiteLLM against a cloud API key, kept as
-    #   a fallback for anyone who wants a metered-key setup instead.
-    llm_backend: Literal["claude_code", "openai", "gemini", "vertex"] = "claude_code"
-    llm_provider: Literal["openai", "gemini", "vertex"] = "openai"  # only used when llm_backend != claude_code
-    llm_model: str = "gpt-4o-mini"
-    openai_api_key: str = ""
-    gemini_api_key: str = ""
-    google_cloud_project: str = ""
-    google_cloud_location: str = "us-central1"
-
-    # Embedding
-    embedding_provider: Literal["local", "openai"] = "local"
+    # Embedding (local only — sentence-transformers, no API key needed)
     embedding_model: str = "BAAI/bge-m3"
 
     # Discord

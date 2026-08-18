@@ -19,12 +19,9 @@ def setup_logging():
 
 def main():
     setup_logging()
-    backend_label = settings.llm_backend if settings.llm_backend == "claude_code" else f"{settings.llm_backend}/{settings.llm_model}"
-    logger.info(f"Starting Market Agent | LLM: {backend_label}")
+    logger.info("Starting Market Agent | LLM: claude_code")
 
     async def _start():
-        from src.memory.database import try_init_db
-        await try_init_db()
         from src.bot.discord_bot import bot
         from src.config import settings
         await bot.start(settings.discord_bot_token)

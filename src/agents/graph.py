@@ -130,7 +130,7 @@ async def run_agent(
 
 def _infer_failed_stage(error_msg: str) -> str:
     msg = error_msg.lower()
-    if "synthesizer" in msg or "llm" in msg or "litellm" in msg:
+    if "synthesizer" in msg or "llm" in msg or "claude" in msg:
         return "報告生成"
     if "technical" in msg or "price" in msg or "yahoo" in msg:
         return "技術面數據擷取"

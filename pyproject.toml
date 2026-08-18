@@ -12,14 +12,8 @@ description = "LangGraph multi-agent stock market analysis bot"
 requires-python = ">=3.12"
 
 dependencies = [
-    # LangGraph / LangChain
+    # Agent orchestration
     "langgraph>=0.2.0",
-    "langchain>=0.3.0",
-    "langchain-community>=0.3.0",
-    "langchain-openai>=0.2.0",
-    "langchain-google-genai>=2.0.0",
-    # LLM abstraction
-    "litellm>=1.50.0",
     # Data sources
     "yfinance>=0.2.40",
     "feedparser>=6.0.11",        # RSS
@@ -50,7 +44,6 @@ dependencies = [
     "loguru>=0.7.2",
     "rich>=13.7.0",              # CLI pretty output
     "playwright>=1.60.0",
-    "langchain-google-vertexai>=3.2.3",
     # MCP server (Claude Code agent backend)
     "mcp>=1.0.0",
 ]

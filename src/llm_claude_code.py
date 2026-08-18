@@ -5,9 +5,8 @@ Two call shapes, matching the two ways this codebase talks to an LLM:
 - claude_code_chat: bare system+user prompt -> text. No tools bound, no
   agentic loop. Used for single-shot classification/extraction/synthesis
   (orchestrator intent routing, market_agent hot-stock extraction,
-  synthesizer report generation) — the same shape as the LiteLLM
-  llm_chat() it replaces. This is reliable because there's no tool
-  protocol for the model to roleplay around.
+  synthesizer report generation). This is reliable because there's no
+  tool protocol for the model to roleplay around.
 
 - claude_code_research: hands Claude Code the src/mcp_server.py MCP
   tools and lets it run its own ReAct loop. Used only where real tool

@@ -18,7 +18,7 @@ from discord.ext import commands
 from src.config import settings
 from src.agents.graph import run_agent
 from src.memory.session_store import get_session_messages, append_message, clear_session
-from src.memory.database import init_db, AsyncSessionFactory
+from src.memory.database import try_init_db, AsyncSessionFactory
 from src.memory.conversation_repo import (
     get_or_create_user,
     get_or_create_conversation,
@@ -52,7 +52,7 @@ class MarketAgentBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        await init_db()
+        await try_init_db()
         if settings.discord_guild_id:
             guild = discord.Object(id=int(settings.discord_guild_id))
             self.tree.copy_global_to(guild=guild)

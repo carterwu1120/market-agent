@@ -49,38 +49,9 @@ services:
     profiles:
       - tools          # only starts with: docker compose --profile tools up
 
-  # ── vLLM (production inference server) ───────────────────────────────────
-  # Requires NVIDIA GPU + nvidia-container-toolkit installed on the host.
-  # Uncomment when ready to use GPU-accelerated inference.
-  #
-  # vllm:
-  #   image: vllm/vllm-openai:latest
-  #   restart: unless-stopped
-  #   ports:
-  #     - "8000:8000"
-  #   volumes:
-  #     - vllm_models:/root/.cache/huggingface
-  #   command: ["--model", "mistralai/Mistral-7B-Instruct-v0.2", "--host", "0.0.0.0"]
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: 1
-  #             capabilities: [gpu]
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 12
-  #     start_period: 60s
-  #   networks:
-  #     - market-net
-
 volumes:
   postgres_data:
   redis_data:
-  # vllm_models:    # uncomment with vllm service
 
 networks:
   market-net:

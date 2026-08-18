@@ -20,7 +20,7 @@
 - 🔍 **ReAct 研究模式** — 複雜/比較型問題（「比較半導體和航運哪個強」「找最值得買的機器人股」）自動進入 ReAct loop，LLM 自主決定呼叫哪些工具、呼叫幾次，直到得出結論；注入對話歷史，支援跨輪比較
 - 📣 **法說會與技術新聞** — 鉅亨網個股搜尋，優先抓法說會、技術突破、產品相關報導，作為「獨家技術亮點」段落的唯一來源
 - ⏰ **定時排程報告** — 每日自動在 08:30（盤前）、12:00（盤中）、14:30（收盤後）發送市場報告至指定 Discord 頻道；設定 `SCHEDULE_REPORT_CHANNEL_ID` 即可啟用，無需手動觸發
-- 🤖 **LLM 後端可切換** — 預設 **Claude Code CLI**（`claude -p`，不需 API key，算在 Claude Code 訂閱額度內）；也可切回 OpenAI / Gemini / Vertex AI，改 `.env` 即可
+- 🤖 **LLM 後端** — **Claude Code CLI**（`claude -p`，不需 API key，算在 Claude Code 訂閱額度內）
 
 ---
 
@@ -153,7 +153,7 @@ orchestrator → [technical_agent, chip_agent, social_agent, rag_agent] → synt
 
 - Docker & Docker Compose
 - Discord Bot Token（[Developer Portal](https://discord.com/developers/applications) 建立）
-- [Claude Code CLI](https://docs.claude.com/claude-code) 已安裝並登入（`claude` 指令可用），且 Claude Code 訂閱有效 —— 預設 LLM 後端需要它；不想用的話改 `.env` 的 `LLM_BACKEND` 見下方「切換 LLM 後端」
+- [Claude Code CLI](https://docs.claude.com/claude-code) 已安裝並登入（`claude` 指令可用），且 Claude Code 訂閱有效 —— 所有 LLM 呼叫都靠它，沒有雲端 API key 備援
 
 ### 1. 設定環境變數
 
@@ -245,37 +245,11 @@ python -m src.cli
 
 ---
 
-## 切換 LLM 後端
+## LLM 後端
 
-只需修改 `.env`，不需改任何程式碼：
+全部走本機 **Claude Code CLI**（`claude -p`），計入 Claude Code 訂閱額度，不需要任何雲端 API key，也沒有其他後端可切換。需求：本機已安裝並登入 `claude`。
 
-```env
-# Claude Code CLI（預設，不需 API key）
-# 需求：本機已安裝並登入 `claude`（Claude Code CLI），且 Claude Code 訂閱有效
-LLM_BACKEND=claude_code
-
-# OpenAI（metered API key）
-LLM_BACKEND=openai
-LLM_PROVIDER=openai
-LLM_MODEL=gpt-4o-mini
-OPENAI_API_KEY=sk-...
-
-# Gemini（Developer API）
-LLM_BACKEND=gemini
-LLM_PROVIDER=gemini
-LLM_MODEL=gemini-2.0-flash
-GEMINI_API_KEY=...
-
-# Vertex AI（GCP Application Default Credentials）
-LLM_BACKEND=vertex
-LLM_PROVIDER=vertex
-LLM_MODEL=gemini-2.5-flash
-GOOGLE_CLOUD_PROJECT=your-project-id
-GOOGLE_CLOUD_LOCATION=us-central1
-# 需先執行：gcloud auth application-default login
-```
-
-### Claude Code 後端的兩種呼叫形狀
+### 兩種呼叫形狀
 
 | 用途 | 函數 | 機制 | 使用位置 |
 |------|------|------|---------|
@@ -302,9 +276,7 @@ market-agent/
 └── src/
     ├── main.py                  # 啟動入口
     ├── config.py                # 所有設定（pydantic-settings）
-    ├── llm.py                   # LiteLLM 備選後端（openai/gemini/vertex）
-    ├── llm_claude_code.py       # Claude Code CLI 後端（預設，claude_code_chat / claude_code_research）
-    ├── llm_router.py            # 後端切換（讀 settings.llm_backend）
+    ├── llm_claude_code.py       # Claude Code CLI 後端（claude_code_chat / claude_code_research）
     ├── mcp_server.py            # MCP server：暴露 11 個工具給 claude -p --mcp-config 呼叫
     ├── agents/
     │   ├── graph.py             # ★ LangGraph 圖定義（核心）
@@ -331,7 +303,7 @@ market-agent/
     │   ├── session_store.py     # Redis 短期記憶
     │   └── conversation_repo.py # PostgreSQL 長期記憶
     ├── rag/
-    │   ├── embedder.py          # sentence-transformers / OpenAI
+    │   ├── embedder.py          # sentence-transformers（本機）
     │   └── knowledge_store.py   # pgvector 存取 + 相似度搜尋
     └── bot/
         └── discord_bot.py       # Discord slash commands + 訊息處理
@@ -360,11 +332,10 @@ python scripts/init_knowledge_base.py
 
 ### 新增一個 MCP 工具（給 Claude Code ReAct 用）
 
-`research_agent` 走 Claude Code 後端時，工具清單來自 [`src/mcp_server.py`](src/mcp_server.py)，不是 `research_agent.py` 裡的 LangChain `@tool`（那份是 LiteLLM 後端專用，兩邊目前各自維護一份同名工具，邏輯本體共用 `src/tools/*.py`）。新增工具時兩邊都要加：
+`research_agent` 的工具清單來自 [`src/mcp_server.py`](src/mcp_server.py)，用 `@mcp.tool()` 註冊。新增工具時：
 
-1. 在 `research_agent.py` 用 `@tool` 註冊一份（LiteLLM 路徑用）
-2. 在 `mcp_server.py` 用 `@mcp.tool()` 註冊同名同邏輯的一份（Claude Code 路徑用）
-3. 兩邊都指向同一個 `src/tools/*.py` 底層函數，不要各寫一份邏輯
+1. 在 `mcp_server.py` 用 `@mcp.tool()` 註冊
+2. 邏輯本體放在 `src/tools/*.py`，工具函數只做參數轉換與呼叫
 
 ### 已知的資料品質注意事項
 
@@ -377,8 +348,7 @@ python scripts/init_knowledge_base.py
 | 層 | 技術 |
 |----|------|
 | Agent 編排 | LangGraph 0.2+ |
-| LLM（預設） | Claude Code CLI（`claude -p` + MCP tool-calling） |
-| LLM（備選） | LiteLLM + LangChain（OpenAI / Gemini / Vertex AI） |
+| LLM | Claude Code CLI（`claude -p` + MCP tool-calling） |
 | 股票數據 | yfinance, pandas-ta |
 | 台股籌碼 | TWSE 公開 API, goodinfo scraper |
 | 新聞 | feedparser (RSS), NewsAPI |

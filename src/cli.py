@@ -24,7 +24,6 @@ from rich.prompt import Prompt
 from rich.rule import Rule
 
 from src.agents.graph import run_agent
-from src.config import settings
 from src.bot.scheduler import SLOT_PROMPTS
 
 console = Console()
@@ -161,7 +160,7 @@ async def _main_async() -> None:
 
     console.print(Panel(
         f"[bold green]Market Agent CLI[/bold green]\n"
-        f"LLM: [cyan]{settings.llm_provider}/{settings.llm_model}[/cyan]\n"
+        f"LLM: [cyan]claude_code[/cyan]\n"
         f"輸入 [bold]/help[/bold] 查看指令，[bold]/quit[/bold] 離開",
         border_style="green",
     ))

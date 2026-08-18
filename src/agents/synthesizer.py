@@ -10,9 +10,7 @@ from datetime import datetime, timezone, timedelta
 from loguru import logger
 
 from src.agents.state import AgentState
-from src.llm import llm_chat
 from src.llm_claude_code import claude_code_chat
-from src.llm_router import use_claude_code_backend
 from src.memory.news_cache import load_news_cache
 
 _TW_TZ = timezone(timedelta(hours=8))
@@ -342,19 +340,10 @@ async def _synthesize_history(state: AgentState) -> dict:
         history_summary=history_table,
     )
     try:
-        if use_claude_code_backend():
-            llm_analysis = await claude_code_chat(
-                messages=[{"role": "user", "content": prompt}],
-                system=SYNTHESIS_SYSTEM,
-            )
-        else:
-            llm_analysis = await llm_chat(
-                messages=[
-                    {"role": "system", "content": SYNTHESIS_SYSTEM},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.3,
-            )
+        llm_analysis = await claude_code_chat(
+            messages=[{"role": "user", "content": prompt}],
+            system=SYNTHESIS_SYSTEM,
+        )
     except Exception as exc:
         logger.error(f"Synthesizer (history) LLM failed: {exc}")
         llm_analysis = f"⚠️ 報告生成失敗：{exc}"
@@ -431,19 +420,10 @@ async def synthesizer_node(state: AgentState) -> dict:
             social_summary=_safe(_summarize_social(state.social_signals)),
             rag_context=_safe(rag_text),
         )
-        if use_claude_code_backend():
-            llm_analysis = await claude_code_chat(
-                messages=[{"role": "user", "content": prompt}],
-                system=SYNTHESIS_SYSTEM,
-            )
-        else:
-            llm_analysis = await llm_chat(
-                messages=[
-                    {"role": "system", "content": SYNTHESIS_SYSTEM},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.3,
-            )
+        llm_analysis = await claude_code_chat(
+            messages=[{"role": "user", "content": prompt}],
+            system=SYNTHESIS_SYSTEM,
+        )
     except Exception as exc:
         logger.error(f"Synthesizer LLM failed: {exc}")
         llm_analysis = f"⚠️ 報告生成失敗：{exc}"
