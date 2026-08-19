@@ -4,11 +4,11 @@ This is the only agent that calls the LLM with actual data.
 Every claim in the output must reference a source from the collected data.
 """
 
-import re
 from datetime import datetime, timezone, timedelta
 from loguru import logger
 
 from src.llm_claude_code import claude_code_chat
+from src.agents.report_utils import extract_conclusion
 
 _TW_TZ = timezone(timedelta(hours=8))
 
@@ -313,17 +313,9 @@ async def write_report(
         logger.error(f"Synthesizer LLM failed: {exc}")
         llm_analysis = f"⚠️ 報告生成失敗：{exc}"
 
-    report = llm_analysis
+    report, conclusion = extract_conclusion(llm_analysis)
 
-    # Extract conclusion paragraph and clean tags from report
-    conclusion = ""
-    match = re.search(r"CONCLUSION_SUMMARY:\s*(.*?)\s*END_CONCLUSION", report, re.DOTALL)
-    if match:
-        conclusion = match.group(1).strip()
-        report = re.sub(r"CONCLUSION_SUMMARY:\s*", "", report)
-        report = re.sub(r"\s*END_CONCLUSION", "", report)
-
-    # Persist daily snapshots to PostgreSQL (best-effort, non-blocking)
+    # Persist daily snapshots to SQLite (best-effort, non-blocking)
     import asyncio as _asyncio
     from src.memory.stock_store import upsert_daily_price, upsert_daily_chip, upsert_daily_fundamental
     _asyncio.ensure_future(upsert_daily_price(technical_data))

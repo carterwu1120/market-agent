@@ -43,6 +43,11 @@ def _append_message_sync(
 ) -> None:
     conn = _connect()
     try:
+        # BEGIN IMMEDIATE takes the write lock before the SELECT, so a second
+        # concurrent append (e.g. two messages landing in the same channel at
+        # once) blocks until this one commits instead of racing on a stale
+        # read and silently dropping one of the two appends.
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT messages, expires_at FROM sessions WHERE channel_id = ?", (channel_id,)
         ).fetchone()
@@ -64,6 +69,9 @@ def _append_message_sync(
             (channel_id, json.dumps(messages, ensure_ascii=False), time.time() + settings.session_ttl_seconds),
         )
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

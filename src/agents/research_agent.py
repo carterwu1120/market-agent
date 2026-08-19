@@ -16,6 +16,7 @@ import re
 from loguru import logger
 
 from src.llm_claude_code import claude_code_research
+from src.agents.report_utils import extract_conclusion
 
 REACT_SYSTEM = """你是一個台股研究分析師兼個人助理，可以使用以下工具：
 
@@ -42,6 +43,7 @@ REACT_SYSTEM = """你是一個台股研究分析師兼個人助理，可以使�
 5. 嚴禁使用工具之外的自身知識補充數字或技術描述
 6. 【重要】對話歷史中的數字僅供理解問題脈絡，不可直接引用為當前數據。
    若需要某支股票的數據，必須在本輪呼叫工具重新取得，不得使用歷史對話中的舊數字。
+7. 回答結尾必須包含 CONCLUSION_SUMMARY: ... END_CONCLUSION 區塊，用 2-3 句繁體中文總結這次分析的結論。
 """
 
 
@@ -64,6 +66,7 @@ async def run_research(user_message: str, conversation_history: list[dict]) -> d
         history.append({"role": m["role"], "content": content})
 
     text = await claude_code_research(REACT_SYSTEM, history, user_message)
-    used_symbols = list(dict.fromkeys(_SYMBOL_RE.findall(text)))
+    report, conclusion = extract_conclusion(text)
+    used_symbols = list(dict.fromkeys(_SYMBOL_RE.findall(report)))
     logger.info(f"ResearchAgent: done, symbols={used_symbols}")
-    return {"final_report": text, "conclusion": text[-600:], "sources": [], "target_symbols": used_symbols}
+    return {"final_report": report, "conclusion": conclusion, "sources": [], "target_symbols": used_symbols}
