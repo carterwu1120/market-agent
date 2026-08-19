@@ -27,7 +27,6 @@ from src.tools.company_insight import get_company_insights
 from src.tools.chip_data import get_institutional_trading, get_margin_trading
 from src.tools.social_signal import fetch_ptt_stock, filter_signal_posts
 from src.tools.cmoney_forum import get_forum_posts
-from src.memory.database import AsyncSessionFactory
 from src.rag.knowledge_store import search_knowledge
 from src.agents.market_agent import _normalize_articles, _extract_hot_stocks
 from src.agents.synthesizer import write_report
@@ -160,15 +159,7 @@ async def _social(symbols: list[str]) -> tuple[list[dict], list[str]]:
 async def _rag(user_message: str, symbols: list[str]) -> list[dict]:
     query = f"{user_message} {' '.join(symbols)}" if symbols else user_message
     try:
-        from sqlalchemy import text as sa_text
-        async with AsyncSessionFactory() as session:
-            await session.execute(sa_text("SELECT 1"))
-    except Exception as exc:
-        logger.warning(f"daily_brief RAG: DB unavailable, skipping ({exc})")
-        return []
-    try:
-        async with AsyncSessionFactory() as session:
-            return await search_knowledge(session, query, top_k=5)
+        return await search_knowledge(query, top_k=5)
     except Exception as exc:
         logger.warning(f"daily_brief RAG search failed: {exc}")
         return []

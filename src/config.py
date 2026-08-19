@@ -29,15 +29,8 @@ class Settings(BaseSettings):
             return set()
         return {c.strip() for c in self.allowed_channel_ids.split(",") if c.strip()}
 
-    # PostgreSQL
-    postgres_host: str = "localhost"
-    postgres_port: int = 5432
-    postgres_db: str = "market_agent"
-    postgres_user: str = "market_agent"
-    postgres_password: str = "changeme"
-
-    # Redis
-    redis_url: str = "redis://localhost:6379/0"
+    # Local storage (SQLite — replaces Postgres + Redis)
+    db_path: str = "data/market_agent.db"
 
     # News
     newsapi_key: str = ""
@@ -54,20 +47,6 @@ class Settings(BaseSettings):
     news_lookback_hours: int = 24
     session_ttl_seconds: int = 3600
     news_cache_ttl_seconds: int = 1800  # 30 min news cache
-
-    @property
-    def postgres_dsn(self) -> str:
-        return (
-            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
-
-    @property
-    def postgres_dsn_sync(self) -> str:
-        return (
-            f"postgresql://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
 
 
 settings = Settings()

@@ -2,9 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps for lxml, psycopg, hiredis
+# System deps for lxml / native wheel builds
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc g++ libpq-dev curl \
+    gcc g++ curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy everything first so editable install can find src/

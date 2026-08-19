@@ -105,10 +105,10 @@ def _infer_failed_stage(error_msg: str) -> str:
         return "籌碼面數據擷取"
     if "news" in msg or "rss" in msg:
         return "新聞擷取"
-    if "rag" in msg or "embedding" in msg or "pgvector" in msg:
+    if "rag" in msg or "embedding" in msg:
         return "知識庫查詢"
     if "intent" in msg:
         return "意圖分析"
-    if "redis" in msg:
+    if "sqlite" in msg:
         return "快取讀寫"
     return "資料處理"

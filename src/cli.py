@@ -130,13 +130,12 @@ async def _handle_command_async(cmd: str) -> bool:
 
 
 async def _main_async() -> None:
-    # Auto-init DB tables if PostgreSQL is available
-    from src.memory.database import try_init_db
-    ok = await try_init_db()
+    from src.memory.store import init_storage
+    ok = await init_storage()
     if ok:
-        console.print("[dim]✓ DB connected[/dim]")
+        console.print("[dim]✓ 本機資料庫已就緒[/dim]")
     else:
-        console.print("[dim]⚠ DB offline — memory features disabled[/dim]")
+        console.print("[dim]⚠ 本機資料庫初始化失敗，記憶功能停用[/dim]")
 
     console.print(Panel(
         f"[bold green]Market Agent CLI[/bold green]\n"

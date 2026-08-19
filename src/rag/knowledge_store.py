@@ -1,19 +1,22 @@
-"""RAG knowledge store — pgvector similarity search.
+"""RAG knowledge store — local SQLite + brute-force cosine similarity.
 
-Used for two purposes:
-1. Technical analysis knowledge (RSI interpretation, MA strategies, etc.)
-2. Cached news embeddings for duplicate detection and similarity search
+Used for technical analysis knowledge (RSI interpretation, MA strategies, etc.).
+Corpus is small (a handful of docs), so loading every row and scoring it in
+Python with numpy is simpler than standing up a real vector index.
 """
 
 from __future__ import annotations
-import hashlib
+
+import asyncio
+import json
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
+import numpy as np
 from loguru import logger
 
-from src.memory.models import KnowledgeChunk, NewsItem
+from src.memory.store import _connect
 from src.rag.embedder import embed_single, embed_texts
 
 
@@ -24,8 +27,6 @@ def _chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str
 
     Priority: paragraph (blank line) → sentence (。？！) → word count fallback.
     """
-    import re
-
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     if not paragraphs:
         return []
@@ -62,8 +63,36 @@ def _chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str
     return chunks
 
 
+def _already_ingested_sync(doc_id: str) -> bool:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT id FROM knowledge_chunks WHERE doc_id = ? LIMIT 1", (doc_id,)
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def _insert_chunks_sync(doc_id: str, meta: dict, chunks: list[str], embeddings: list[list[float]]) -> None:
+    conn = _connect()
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        meta_json = json.dumps(meta, ensure_ascii=False)
+        for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+            conn.execute(
+                """
+                INSERT INTO knowledge_chunks (doc_id, chunk_index, content, meta, embedding, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (doc_id, idx, chunk, meta_json, np.array(emb, dtype=np.float32).tobytes(), now),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 async def ingest_document(
-    session: AsyncSession,
     doc_id: str,
     content: str,
     meta: dict | None = None,
@@ -74,30 +103,17 @@ async def ingest_document(
     if not chunks:
         return 0
 
-    # Check if already ingested
-    existing = await session.execute(
-        select(KnowledgeChunk.id).where(KnowledgeChunk.doc_id == doc_id).limit(1)
-    )
-    if existing.scalar_one_or_none():
+    if await asyncio.to_thread(_already_ingested_sync, doc_id):
         logger.info(f"Document '{doc_id}' already in knowledge base, skipping")
         return 0
 
     embeddings = await embed_texts(chunks)
-    for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
-        session.add(KnowledgeChunk(
-            doc_id=doc_id,
-            chunk_index=idx,
-            content=chunk,
-            meta=meta or {},
-            embedding=emb,
-        ))
-
-    await session.commit()
+    await asyncio.to_thread(_insert_chunks_sync, doc_id, meta or {}, chunks, embeddings)
     logger.info(f"Ingested '{doc_id}': {len(chunks)} chunks")
     return len(chunks)
 
 
-async def ingest_directory(session: AsyncSession, directory: str | Path) -> None:
+async def ingest_directory(directory: str | Path) -> None:
     """Ingest all .txt and .md files from a directory."""
     path = Path(directory)
     # pathlib does not support brace expansion — iterate each suffix separately
@@ -109,70 +125,44 @@ async def ingest_directory(session: AsyncSession, directory: str | Path) -> None
         raise RuntimeError(f"No .md/.txt files found in {path} but directory is non-empty")
     for f in files:
         content = f.read_text(encoding="utf-8", errors="ignore")
-        await ingest_document(session, doc_id=str(f), content=content, meta={"filename": f.name})
+        await ingest_document(doc_id=str(f), content=content, meta={"filename": f.name})
 
 
 # ── Similarity search ────────────────────────────────────────────────────────
 
-async def search_knowledge(
-    session: AsyncSession,
-    query: str,
-    top_k: int = 5,
-    score_threshold: float = 0.5,
-) -> list[dict]:
-    """Vector similarity search over the knowledge base."""
-    query_emb = await embed_single(query)
-
-    result = await session.execute(
-        text("""
-            SELECT id, doc_id, content, meta,
-                   1 - (embedding <=> CAST(:embedding AS vector)) AS score
-            FROM knowledge_chunks
-            ORDER BY embedding <=> CAST(:embedding AS vector)
-            LIMIT :k
-        """),
-        {"embedding": str(query_emb), "k": top_k},
-    )
-
-    rows = result.fetchall()
-    return [
-        {"doc_id": r.doc_id, "content": r.content, "score": r.score, "meta": r.meta}
-        for r in rows
-        if r.score >= score_threshold
-    ]
+def _load_chunks_sync() -> list[dict]:
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT doc_id, content, meta, embedding FROM knowledge_chunks").fetchall()
+        return [
+            {
+                "doc_id": r["doc_id"],
+                "content": r["content"],
+                "meta": json.loads(r["meta"]),
+                "embedding": np.frombuffer(r["embedding"], dtype=np.float32),
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
 
 
-async def search_news(
-    session: AsyncSession,
-    query: str,
-    top_k: int = 10,
-    score_threshold: float = 0.4,
-) -> list[dict]:
-    """Vector similarity search over cached news embeddings."""
-    query_emb = await embed_single(query)
+async def search_knowledge(query: str, top_k: int = 5, score_threshold: float = 0.5) -> list[dict]:
+    """Brute-force cosine similarity search over the knowledge base."""
+    query_emb = np.array(await embed_single(query), dtype=np.float32)
+    query_norm = np.linalg.norm(query_emb)
+    if query_norm == 0:
+        return []
 
-    result = await session.execute(
-        text("""
-            SELECT id, title, content, url, source, published_at,
-                   1 - (embedding <=> CAST(:embedding AS vector)) AS score
-            FROM news_items
-            WHERE embedding IS NOT NULL
-            ORDER BY embedding <=> CAST(:embedding AS vector)
-            LIMIT :k
-        """),
-        {"embedding": str(query_emb), "k": top_k},
-    )
+    chunks = await asyncio.to_thread(_load_chunks_sync)
+    scored = []
+    for c in chunks:
+        vec_norm = np.linalg.norm(c["embedding"])
+        if vec_norm == 0:
+            continue
+        score = float(np.dot(query_emb, c["embedding"]) / (query_norm * vec_norm))
+        if score >= score_threshold:
+            scored.append({"doc_id": c["doc_id"], "content": c["content"], "score": score, "meta": c["meta"]})
 
-    rows = result.fetchall()
-    return [
-        {
-            "title": r.title,
-            "content": r.content,
-            "url": r.url,
-            "source": r.source,
-            "published_at": r.published_at.isoformat() if r.published_at else None,
-            "score": r.score,
-        }
-        for r in rows
-        if r.score >= score_threshold
-    ]
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return scored[:top_k]

@@ -1,7 +1,7 @@
-"""Script to ingest knowledge base documents into pgvector.
+"""Script to ingest knowledge base documents into the local SQLite knowledge store.
 
-Run once after docker compose up:
-  python scripts/init_knowledge_base.py
+Run once (and again whenever you add new files to data/knowledge_base):
+  uv run python scripts/init_knowledge_base.py
 """
 
 import asyncio
@@ -10,19 +10,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.memory.database import init_db, AsyncSessionFactory
+from src.memory.store import init_storage
 from src.rag.knowledge_store import ingest_directory
 
 
 async def main():
-    print("Initializing database...")
-    await init_db()
+    print("Initializing storage...")
+    await init_storage()
 
     kb_path = Path(__file__).parent.parent / "data" / "knowledge_base"
     print(f"Ingesting knowledge base from: {kb_path}")
 
-    async with AsyncSessionFactory() as session:
-        await ingest_directory(session, kb_path)
+    await ingest_directory(kb_path)
 
     print("Done!")
 

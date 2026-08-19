@@ -9,7 +9,6 @@ Commands:
 Free-text messages trigger the orchestrator automatically.
 """
 
-import asyncio
 from loguru import logger
 import discord
 from discord import app_commands
@@ -18,12 +17,7 @@ from discord.ext import commands
 from src.config import settings
 from src.agents.pipeline import run_agent
 from src.memory.session_store import get_session_messages, append_message, clear_session
-from src.memory.database import try_init_db, AsyncSessionFactory
-from src.memory.conversation_repo import (
-    get_or_create_user,
-    get_or_create_conversation,
-    save_message,
-)
+from src.memory.store import init_storage
 
 MAX_DISCORD_LENGTH = 1900  # leave room for formatting
 
@@ -52,7 +46,7 @@ class MarketAgentBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        await try_init_db()
+        await init_storage()
         if settings.discord_guild_id:
             guild = discord.Object(id=int(settings.discord_guild_id))
             self.tree.copy_global_to(guild=guild)
@@ -106,11 +100,11 @@ async def _process_and_reply(
         async def send(text: str):
             await msg.channel.send(text)
 
-    # Load session history from Redis — best-effort, empty on failure
+    # Load session history — best-effort, empty on failure
     try:
         history = await get_session_messages(channel_id, user_id)
     except Exception as exc:
-        logger.warning(f"Redis read failed, proceeding with empty history: {exc}")
+        logger.warning(f"Session read failed, proceeding with empty history: {exc}")
         history = []
 
     intent = ""
@@ -135,7 +129,7 @@ async def _process_and_reply(
     for chunk in chunk_message(report):
         await send(chunk)
 
-    # Persist to Redis session — best-effort
+    # Persist to session store — best-effort
     try:
         await append_message(channel_id, user_id, "user", user_message, username=username)
         await append_message(
@@ -144,23 +138,7 @@ async def _process_and_reply(
             meta={"symbols": target_symbols, "intent": intent},
         )
     except Exception as exc:
-        logger.warning(f"Redis write failed (session not saved): {exc}")
-
-    # Persist to PostgreSQL async — errors logged inside the task
-    asyncio.create_task(_persist_to_db(user_id, username, channel_id, user_message, report))
-
-
-async def _persist_to_db(
-    user_id: str, username: str, channel_id: str, user_msg: str, assistant_msg: str
-) -> None:
-    try:
-        async with AsyncSessionFactory() as session:
-            user = await get_or_create_user(session, int(user_id), username)
-            conv = await get_or_create_conversation(session, user.id, channel_id)
-            await save_message(session, conv.id, "user", user_msg)
-            await save_message(session, conv.id, "assistant", assistant_msg)
-    except Exception as exc:
-        logger.error(f"DB persistence failed for user {user_id}: {exc}")
+        logger.warning(f"Session write failed (not saved): {exc}")
 
 
 # ── Slash Commands ────────────────────────────────────────────────────────────

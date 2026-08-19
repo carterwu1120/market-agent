@@ -1,38 +1,84 @@
-"""Redis-backed conversation session store.
+"""Local SQLite-backed conversation session store.
 
-Uses a Redis List per channel for atomic append operations.
-Each element is a JSON-encoded message dict. This avoids the
-read-modify-write race condition of the previous blob approach.
+One row per channel (shared across all users in the channel), storing the
+whole rolling message list as a JSON blob — mirrors the old Redis List +
+LTRIM + EXPIRE semantics closely enough at this data volume.
 
-Key: session:<channel_id>  (List, shared across all users in the channel)
-Messages include a [username] prefix so the LLM can distinguish speakers
-and decide whether a follow-up refers to a previous user's topic.
+Key: channel_id. Messages include a [username] prefix so the LLM can
+distinguish speakers and decide whether a follow-up refers to a previous
+user's topic.
 """
 
+from __future__ import annotations
+
+import asyncio
 import json
+import time
 from typing import Any
-import redis.asyncio as aioredis
 
 from src.config import settings
-
-_redis: aioredis.Redis | None = None
-
-
-def get_redis() -> aioredis.Redis:
-    global _redis
-    if _redis is None:
-        _redis = aioredis.from_url(settings.redis_url, decode_responses=True)
-    return _redis
+from src.memory.store import _connect
 
 
-def _session_key(channel_id: str) -> str:
-    return f"session:{channel_id}"
+def _get_messages_sync(channel_id: str) -> list[dict[str, Any]]:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT messages, expires_at FROM sessions WHERE channel_id = ?", (channel_id,)
+        ).fetchone()
+        if row is None or row["expires_at"] <= time.time():
+            return []
+        return json.loads(row["messages"])
+    finally:
+        conn.close()
+
+
+def _append_message_sync(
+    channel_id: str,
+    role: str,
+    content: str,
+    meta: dict | None,
+    max_messages: int,
+    username: str,
+) -> None:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT messages, expires_at FROM sessions WHERE channel_id = ?", (channel_id,)
+        ).fetchone()
+        messages = (
+            json.loads(row["messages"])
+            if row is not None and row["expires_at"] > time.time()
+            else []
+        )
+
+        stored_content = f"[{username}]: {content}" if role == "user" and username else content
+        messages.append({"role": role, "content": stored_content, "meta": meta or {}})
+        messages = messages[-max_messages:]
+
+        conn.execute(
+            """
+            INSERT INTO sessions (channel_id, messages, expires_at) VALUES (?, ?, ?)
+            ON CONFLICT(channel_id) DO UPDATE SET messages = excluded.messages, expires_at = excluded.expires_at
+            """,
+            (channel_id, json.dumps(messages, ensure_ascii=False), time.time() + settings.session_ttl_seconds),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _clear_session_sync(channel_id: str) -> None:
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM sessions WHERE channel_id = ?", (channel_id,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 async def get_session_messages(channel_id: str, user_id: str = "") -> list[dict[str, Any]]:
-    r = get_redis()
-    raw_items = await r.lrange(_session_key(channel_id), 0, -1)
-    return [json.loads(item) for item in raw_items]
+    return await asyncio.to_thread(_get_messages_sync, channel_id)
 
 
 async def append_message(
@@ -44,19 +90,10 @@ async def append_message(
     max_messages: int = 20,
     username: str = "",
 ) -> None:
-    r = get_redis()
-    key = _session_key(channel_id)
-    # Prefix user messages with [username] so LLM can distinguish speakers
-    stored_content = f"[{username}]: {content}" if role == "user" and username else content
-    entry = json.dumps({"role": role, "content": stored_content, "meta": meta or {}}, ensure_ascii=False)
-
-    async with r.pipeline(transaction=True) as pipe:
-        pipe.rpush(key, entry)
-        pipe.ltrim(key, -max_messages, -1)
-        pipe.expire(key, settings.session_ttl_seconds)
-        await pipe.execute()
+    await asyncio.to_thread(
+        _append_message_sync, channel_id, role, content, meta, max_messages, username
+    )
 
 
 async def clear_session(channel_id: str, user_id: str = "") -> None:
-    r = get_redis()
-    await r.delete(_session_key(channel_id))
+    await asyncio.to_thread(_clear_session_sync, channel_id)

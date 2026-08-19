@@ -8,15 +8,15 @@
 
 ## 功能
 
-- 📰 **即時新聞** — RSS（Bloomberg、FT、經濟日報、MoneyUDN）+ NewsAPI + GNews 多源整合，任一來源失敗不影響其他；Redis 快取 30 分鐘，重複查詢自動跳過爬蟲
+- 📰 **即時新聞** — RSS（Bloomberg、FT、經濟日報、MoneyUDN）+ NewsAPI + GNews 多源整合，任一來源失敗不影響其他；本機 SQLite 快取 30 分鐘，重複查詢自動跳過爬蟲
 - 🏭 **類股查詢** — 輸入「半導體」「傳產」「金融股」等關鍵字，自動從 TWSE 抓取該產業所有成份股（1077 檔 / 32 產業），fallback 至代表股清單
 - 🎯 **概念股查詢** — 輸入「機器人」「元宇宙」「低軌衛星」「AI人工智慧」等主題，從 **CMoney 概念股分類**（159 個概念，涵蓋所有熱門題材）直接取得結構化個股清單；CMoney 無匹配時 fallback 至新聞關鍵字提取（鉅亨 + UDN）
-- 📈 **技術面分析** — RSI、MACD、MA20/60、EMA12、乖離率、布林帶（yfinance + pandas-ta）；Redis 快取 30 分鐘，避免重複計算 ✅
-- 📊 **基本面分析** — PE、PB、EPS、ROE、分析師評等（Yahoo Finance）；Redis 快取 24 小時 ✅
+- 📈 **技術面分析** — RSI、MACD、MA20/60、EMA12、乖離率、布林帶（yfinance + pandas-ta）；本機 SQLite 快取 30 分鐘，避免重複計算 ✅
+- 📊 **基本面分析** — PE、PB、EPS、ROE、分析師評等（Yahoo Finance）；本機 SQLite 快取 24 小時 ✅
 - 🧩 **籌碼面分析** — 三大法人買賣超（TWSE 公開 API）✅ | 融資融券 ⚠️ API 不穩定
 - 💬 **社群訊號** — PTT Stock 板關鍵字監控（大單、訂單、法說等）
-- 🧠 **RAG 知識庫** — pgvector 向量搜尋，自訂技術分析知識（需 Docker 啟動 DB）
-- 💾 **頻道共用對話記憶** — Redis session 以頻道為單位共享，每則訊息附帶 `[username]` 前綴，LLM 能辨別不同使用者的發言並判斷是否為接話；每輪回覆儲存 `conclusion`、`symbols`、`intent`，支援跨使用者的 follow-up（「那聯發科呢？」即使是不同人問也能繼承話題）
+- 🧠 **RAG 知識庫** — 本機 SQLite + numpy 餘弦相似度搜尋，自訂技術分析知識（不需要額外啟動任何 DB 服務）
+- 💾 **頻道共用對話記憶** — SQLite session 以頻道為單位共享，每則訊息附帶 `[username]` 前綴，LLM 能辨別不同使用者的發言並判斷是否為接話；每輪回覆儲存 `conclusion`、`symbols`、`intent`，支援跨使用者的 follow-up（「那聯發科呢？」即使是不同人問也能繼承話題）
 - 🔍 **ReAct 研究模式** — 複雜/比較型問題（「比較半導體和航運哪個強」「找最值得買的機器人股」）自動進入 ReAct loop，LLM 自主決定呼叫哪些工具、呼叫幾次，直到得出結論；注入對話歷史，支援跨輪比較
 - 📣 **法說會與技術新聞** — 鉅亨網個股搜尋，優先抓法說會、技術突破、產品相關報導，作為「獨家技術亮點」段落的唯一來源
 - ⏰ **定時排程報告** — 每日自動在 08:30（盤前）、12:00（盤中）、14:30（收盤後）發送市場報告至指定 Discord 頻道；設定 `SCHEDULE_REPORT_CHANNEL_ID` 即可啟用，無需手動觸發
@@ -31,8 +31,7 @@
 ```mermaid
 flowchart TD
     subgraph MEM["記憶層跨輪對話"]
-        REDIS["Redis\nsession 歷史 · symbols · intent · conclusion"]
-        PG["PostgreSQL\n長期記憶 · RAG 知識庫向量"]
+        SQLITE["本機 SQLite\nsession 歷史 · 股票快照 · RAG 向量"]
     end
 
     USER([使用者輸入]) --> CLS
@@ -55,7 +54,7 @@ flowchart TD
         TA & FA & CA & SA & RAGA --> SYN["write_report()\nLLM 整合報告 · 解析 conclusion"]
     end
 
-    RA -->|直接輸出| END([最終報告\n儲存 symbols · intent · conclusion → Redis])
+    RA -->|直接輸出| END([最終報告\n儲存 symbols · intent · conclusion → SQLite])
     SYN --> END
 ```
 
@@ -96,9 +95,9 @@ flowchart TD
 
 ### 前置需求
 
-- Docker & Docker Compose
 - Discord Bot Token（[Developer Portal](https://discord.com/developers/applications) 建立）
 - [Claude Code CLI](https://docs.claude.com/claude-code) 已安裝並登入（`claude` 指令可用），且 Claude Code 訂閱有效 —— 所有 LLM 呼叫都靠它，沒有雲端 API key 備援
+- [uv](https://docs.astral.sh/uv/)（Python 套件管理與執行）
 
 ### 1. 設定環境變數
 
@@ -109,28 +108,21 @@ cp .env.example .env
 最少需填：
 ```env
 DISCORD_BOT_TOKEN=你的token
-POSTGRES_PASSWORD=自訂密碼
 ```
 
-### 2. 啟動服務
+### 2. 安裝依賴並啟動
 
 ```bash
-docker compose up -d
+uv sync
+uv run python -m src.main
 ```
 
-服務清單：
-| 服務 | Port | 說明 |
-|------|------|------|
-| `app` | — | Discord bot 主程式 |
-| `postgres` | 5432 | PostgreSQL + pgvector |
-| `redis` | 6379 | Session cache |
+> 記憶、快取、RAG 知識庫都是本機一個 SQLite 檔案（`data/market_agent.db`，可用 `DB_PATH` 調整），不需要另外啟動任何資料庫服務。
 
-> LLM 預設走本機 Claude Code CLI（不在 docker-compose 裡，見上方「前置需求」）。
-
-### 3. 初始化知識庫（首次）
+### 3. 初始化知識庫（首次，或每次新增知識庫文件後）
 
 ```bash
-docker compose exec app python scripts/init_knowledge_base.py
+uv run python scripts/init_knowledge_base.py
 ```
 
 ### 4. 使用 Discord Bot
@@ -174,7 +166,7 @@ SCHEDULE_ENABLED=true                    # 預設已開啟
 不想設定 Discord Bot 時，可直接用 CLI 測試完整 agent pipeline：
 
 ```bash
-python -m src.cli
+uv run python -m src.cli
 ```
 
 | 指令 | 說明 |
@@ -186,7 +178,7 @@ python -m src.cli
 | `/help` | 顯示說明 |
 | 直接輸入問題 | 自由對話（支援 follow-up） |
 
-> CLI 與 Discord Bot 使用同一套 `run_agent` pipeline，行為完全一致。DB 服務（PostgreSQL、Redis）需在 Docker 中運行；若未啟動，記憶與 RAG 功能自動降級，基本查詢仍可使用。
+> CLI 與 Discord Bot 使用同一套 `run_agent` pipeline，行為完全一致。記憶／快取／RAG 都是本機 SQLite 檔案，沒有額外服務需要啟動。
 
 ---
 
@@ -209,15 +201,14 @@ python -m src.cli
 
 ```
 market-agent/
-├── docker-compose.yml
 ├── Dockerfile
 ├── pyproject.toml
 ├── .env.example
 ├── data/
+│   ├── market_agent.db          # 本機 SQLite（session/快取/股票快照/RAG，執行後自動建立）
 │   └── knowledge_base/          # 放 .md/.txt 會自動被 RAG 索引
-│       └── technical_analysis_basics.md
 ├── scripts/
-│   └── init_knowledge_base.py   # 初始化向量知識庫
+│   └── init_knowledge_base.py   # 初始化知識庫
 └── src/
     ├── main.py                  # 啟動入口
     ├── config.py                # 所有設定（pydantic-settings）
@@ -238,13 +229,13 @@ market-agent/
     │   ├── cmoney_concept.py    # CMoney 概念股爬蟲（159 個主題分類）
     │   └── theme_search.py      # 主題搜尋（CMoney 優先 + 新聞 fallback）
     ├── memory/
-    │   ├── models.py            # SQLAlchemy ORM（含 pgvector）
-    │   ├── database.py          # async engine + session factory
-    │   ├── session_store.py     # Redis 短期記憶
-    │   └── conversation_repo.py # PostgreSQL 長期記憶
+    │   ├── store.py             # SQLite schema + connection helper
+    │   ├── cache_store.py       # 通用 TTL 快取（新聞/股票 API）
+    │   ├── session_store.py     # 頻道對話 session（SQLite）
+    │   └── stock_store.py       # 每日股票快照 upsert + 歷史查詢
     ├── rag/
     │   ├── embedder.py          # sentence-transformers（本機）
-    │   └── knowledge_store.py   # pgvector 存取 + 相似度搜尋
+    │   └── knowledge_store.py   # SQLite + numpy 餘弦相似度搜尋
     └── bot/
         └── discord_bot.py       # Discord slash commands + 訊息處理
 ```
@@ -262,7 +253,7 @@ market-agent/
 
 把 `.md` 或 `.txt` 放進 `data/knowledge_base/`，重新執行：
 ```bash
-python scripts/init_knowledge_base.py
+uv run python scripts/init_knowledge_base.py
 ```
 
 ### 新增 Telegram 支援
@@ -292,7 +283,7 @@ python scripts/init_knowledge_base.py
 | 台股籌碼 | TWSE 公開 API, goodinfo scraper |
 | 新聞 | feedparser (RSS), NewsAPI |
 | 社群訊號 | httpx + BeautifulSoup (PTT) |
-| 向量搜尋 | pgvector + sentence-transformers (BAAI/bge-m3) |
-| 對話記憶 | Redis（短期）+ PostgreSQL（長期） |
+| 向量搜尋 | SQLite (BLOB) + numpy + sentence-transformers (BAAI/bge-m3) |
+| 對話記憶／快取／股票快照 | SQLite（本機單一檔案） |
 | Bot | discord.py 2.4+ |
-| 部署 | Docker Compose |
+| 部署 | `uv run` 直接跑，或用 `Dockerfile` 自行 build image |
