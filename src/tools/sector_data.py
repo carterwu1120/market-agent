@@ -6,8 +6,6 @@ Fallback: 硬編碼代表股清單（A 方案）
 
 from __future__ import annotations
 
-import asyncio
-from functools import lru_cache
 from typing import Any
 
 import httpx

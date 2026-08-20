@@ -37,10 +37,8 @@ dependencies = [
     # Config & utilities
     "pydantic-settings>=2.4.0",
     "python-dotenv>=1.0.0",
-    "tenacity>=9.0.0",
     "loguru>=0.7.2",
     "rich>=13.7.0",              # CLI pretty output
-    "playwright>=1.60.0",
     # MCP server (Claude Code agent backend)
     "mcp>=1.0.0",
 ]
@@ -59,7 +57,7 @@ market-agent = "src.main:main"
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
