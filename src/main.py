@@ -1,8 +1,9 @@
 """Application entrypoint."""
 
 import asyncio
-from loguru import logger
 import sys
+
+from loguru import logger
 
 from src.config import settings
 

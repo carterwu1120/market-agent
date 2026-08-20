@@ -9,14 +9,14 @@ Commands:
 Free-text messages trigger the orchestrator automatically.
 """
 
-from loguru import logger
 import discord
 from discord import app_commands
 from discord.ext import commands
+from loguru import logger
 
-from src.config import settings
 from src.agents.pipeline import run_agent
-from src.memory.session_store import get_session_messages, append_message, clear_session
+from src.config import settings
+from src.memory.session_store import append_message, clear_session, get_session_messages
 from src.memory.store import init_storage
 
 MAX_DISCORD_LENGTH = 1900  # leave room for formatting

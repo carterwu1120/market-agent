@@ -4,11 +4,12 @@ This is the only agent that calls the LLM with actual data.
 Every claim in the output must reference a source from the collected data.
 """
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+
 from loguru import logger
 
-from src.llm_claude_code import claude_code_chat
 from src.agents.report_utils import extract_conclusion
+from src.llm_claude_code import claude_code_chat
 
 _TW_TZ = timezone(timedelta(hours=8))
 
@@ -365,7 +366,12 @@ async def write_report(
 
     # Persist daily snapshots to SQLite (best-effort, non-blocking)
     import asyncio as _asyncio
-    from src.memory.stock_store import upsert_daily_price, upsert_daily_chip, upsert_daily_fundamental
+
+    from src.memory.stock_store import (
+        upsert_daily_chip,
+        upsert_daily_fundamental,
+        upsert_daily_price,
+    )
     _asyncio.ensure_future(upsert_daily_price(technical_data))
     _asyncio.ensure_future(upsert_daily_chip(chip_data))
     _asyncio.ensure_future(upsert_daily_fundamental(fundamental_data))

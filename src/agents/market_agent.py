@@ -7,10 +7,10 @@ candidate list built deterministically from the TWSE ticker universe.
 import json
 import re
 from dataclasses import asdict
+
 from loguru import logger
 
 from src.llm_claude_code import claude_code_chat
-
 
 _EXTRACT_SYSTEM = """你是台股選股助理。從候選個股清單中，挑出今日新聞最熱門的台灣上市/上櫃個股。
 

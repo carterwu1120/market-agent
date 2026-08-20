@@ -15,8 +15,8 @@ import re
 
 from loguru import logger
 
-from src.llm_claude_code import claude_code_research
 from src.agents.report_utils import extract_conclusion
+from src.llm_claude_code import claude_code_research
 
 REACT_SYSTEM = """你是一個台股研究分析師兼個人助理，可以使用以下工具：
 

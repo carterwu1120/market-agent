@@ -138,9 +138,9 @@ async def _main_async() -> None:
         console.print("[dim]⚠ 本機資料庫初始化失敗，記憶功能停用[/dim]")
 
     console.print(Panel(
-        f"[bold green]Market Agent CLI[/bold green]\n"
-        f"LLM: [cyan]claude_code[/cyan]\n"
-        f"輸入 [bold]/help[/bold] 查看指令，[bold]/quit[/bold] 離開",
+        "[bold green]Market Agent CLI[/bold green]\n"
+        "LLM: [cyan]claude_code[/cyan]\n"
+        "輸入 [bold]/help[/bold] 查看指令，[bold]/quit[/bold] 離開",
         border_style="green",
     ))
 

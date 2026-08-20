@@ -4,6 +4,7 @@
 """
 
 from __future__ import annotations
+
 import asyncio
 from datetime import date, datetime, timezone
 from typing import Any
@@ -11,7 +12,6 @@ from typing import Any
 import httpx
 from bs4 import BeautifulSoup
 from loguru import logger
-
 
 TWSE_BASE = "https://www.twse.com.tw"
 TPEX_BASE = "https://www.tpex.org.tw"

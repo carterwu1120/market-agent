@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, timedelta, timezone
+
 from loguru import logger
 
 from src.memory.store import _connect

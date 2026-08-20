@@ -4,10 +4,11 @@
 """
 
 from __future__ import annotations
+
 import asyncio
 import re
-from datetime import datetime, timezone
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import httpx
 from bs4 import BeautifulSoup

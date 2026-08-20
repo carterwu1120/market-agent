@@ -4,7 +4,8 @@ Every NewsArticle carries a source_url so the LLM can cite it explicitly.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+
 import feedparser
 import httpx
 from loguru import logger

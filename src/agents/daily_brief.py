@@ -14,28 +14,28 @@ from dataclasses import asdict
 
 from loguru import logger
 
+from src.agents.market_agent import _extract_hot_stocks, _normalize_articles
+from src.agents.synthesizer import write_report
 from src.config import settings
 from src.memory.news_cache import load_news_cache, save_news_cache
+from src.tools.chip_data import get_institutional_trading, get_margin_trading
+from src.tools.cmoney_forum import get_forum_posts
+from src.tools.company_insight import get_company_insights
+from src.tools.knowledge_base import read_knowledge_base
+from src.tools.mops_data import (
+    INCOME_STATEMENT_URL,
+    MATERIAL_INFO_URL,
+    get_financial_summary_batch,
+    get_material_info_batch,
+)
 from src.tools.news_fetcher import fetch_all_news
+from src.tools.social_signal import fetch_ptt_stock, filter_signal_posts
 from src.tools.stock_data import (
+    get_fundamental_data,
     get_market_indices,
     get_stock_price,
     get_technical_indicators,
-    get_fundamental_data,
 )
-from src.tools.company_insight import get_company_insights
-from src.tools.chip_data import get_institutional_trading, get_margin_trading
-from src.tools.social_signal import fetch_ptt_stock, filter_signal_posts
-from src.tools.cmoney_forum import get_forum_posts
-from src.tools.mops_data import (
-    get_material_info_batch,
-    get_financial_summary_batch,
-    MATERIAL_INFO_URL,
-    INCOME_STATEMENT_URL,
-)
-from src.tools.knowledge_base import read_knowledge_base
-from src.agents.market_agent import _normalize_articles, _extract_hot_stocks
-from src.agents.synthesizer import write_report
 
 
 async def _fetch_news() -> list[dict]:

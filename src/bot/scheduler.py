@@ -10,15 +10,16 @@ Times:
 """
 
 from __future__ import annotations
+
 import datetime
 import zoneinfo
 
 from discord.ext import tasks
 from loguru import logger
 
-from src.config import settings
 from src.agents.pipeline import run_agent
 from src.bot.discord_bot import chunk_message
+from src.config import settings
 
 SLOT_PROMPTS = {
     "pre_market": (
