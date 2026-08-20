@@ -19,6 +19,8 @@ from src.tools.theme_search import search_theme_stocks
 from src.tools.stock_data import get_technical_indicators, get_fundamental_data, get_stock_price
 from src.tools.chip_data import get_institutional_trading, get_margin_trading
 from src.tools.company_insight import get_company_insights
+from src.tools.web_search import search_web
+from src.tools.mops_data import get_material_info, get_financial_summary
 from src.tools.discord_tools import send_channel_message, send_dm as _discord_send_dm
 from src.tools.gmail_tools import create_draft as _gmail_create_draft, send_email as _gmail_send_email
 
@@ -162,6 +164,53 @@ async def stock_history(symbol: str, days: int = 7) -> str:
         lines.append(f"  {r['date']} 外資:{r.get('foreign_net')} 投信:{r.get('trust_net')} 三大:{r.get('total_3_institutions')}")
     for r in fund:
         lines.append(f"  {r['date']} PE:{r.get('pe_ratio')} PB:{r.get('pb_ratio')} EPS:{r.get('eps_ttm')} ROE:{r.get('roe')}")
+    return "\n".join(lines)
+
+
+# ── 開放搜尋／官方揭露 ────────────────────────────────────────────────────
+
+@mcp.tool()
+async def web_search(query: str, max_results: int = 5) -> str:
+    """開放網頁搜尋（DuckDuckGo），自己下關鍵字查詢固定 API 沒有涵蓋的資訊（新聞事件、市場氛圍等）。
+    嚴禁把搜尋結果當成股價/財報/籌碼等數字的來源——這類數字一律要用 technical_analysis、
+    fundamental_analysis、chip_analysis、company_financial_summary 查證。"""
+    results = await search_web(query, max_results=max_results)
+    if not results:
+        return f"「{query}」沒有找到搜尋結果"
+    lines = [f"搜尋「{query}」結果（僅供參考背景，非結構化資料，數字仍須用其他工具查證）："]
+    for r in results:
+        lines.append(f"- {r['title']}\n  {r['snippet']}\n  來源: {r['url']}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def company_announcements(symbol: str) -> str:
+    """查詢公司「今天」的重大訊息公告（TWSE 官方 MOPS 資料）。只有今天，沒有歷史。symbol 格式：2330.TW"""
+    result = await get_material_info(symbol)
+    if result.get("error"):
+        return f"{symbol} 重大訊息查詢失敗：{result['error']}"
+    items = result.get("items", [])
+    if not items:
+        return f"{symbol} 今日無重大訊息公告"
+    lines = [f"{symbol} 今日重大訊息（來源：{result['source']}）："]
+    for it in items:
+        lines.append(f"- [{it['date']} {it['time']}] {it['subject']}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def company_financial_summary(symbol: str) -> str:
+    """查詢公司「最新一期」公開財報摘要（TWSE 官方 MOPS 綜合損益表）。只有最新一季，沒有歷史。symbol 格式：2330.TW"""
+    result = await get_financial_summary(symbol)
+    if result.get("error"):
+        return f"{symbol} 財報查詢失敗：{result['error']}"
+    fields = result["fields"]
+    skip = {"公司代號", "公司名稱", "出表日期"}
+    lines = [f"{symbol} {fields.get('公司名稱', '')} 最新一期公開財報（來源：{result['source']}）："]
+    for k, v in fields.items():
+        if k in skip:
+            continue
+        lines.append(f"  {k}: {v}")
     return "\n".join(lines)
 
 

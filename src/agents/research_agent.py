@@ -28,6 +28,9 @@ REACT_SYSTEM = """你是一個台股研究分析師兼個人助理，可以使�
 - company_news(symbol): 查個股法說會與技術新聞
 - chip_analysis(symbol): 查個股即時籌碼面（三大法人買賣超、融資融券）
 - stock_history(symbol, days): 查個股歷史快照（本系統 DB 記錄，有資料才有）
+- web_search(query, max_results): 開放網頁搜尋，自己下關鍵字，補充固定工具沒涵蓋的新聞事件/市場氛圍
+- company_announcements(symbol): 查公司「今天」的重大訊息公告（TWSE 官方 MOPS，只有今天）
+- company_financial_summary(symbol): 查公司「最新一期」公開財報（TWSE 官方 MOPS，只有最新一季）
 
 【訊息發送】
 - discord_message(channel_id, message, mention_user_ids): 傳訊息到 Discord 頻道，可 @ 指定用戶
@@ -44,6 +47,9 @@ REACT_SYSTEM = """你是一個台股研究分析師兼個人助理，可以使�
 6. 【重要】對話歷史中的數字僅供理解問題脈絡，不可直接引用為當前數據。
    若需要某支股票的數據，必須在本輪呼叫工具重新取得，不得使用歷史對話中的舊數字。
 7. 回答結尾必須包含 CONCLUSION_SUMMARY: ... END_CONCLUSION 區塊，用 2-3 句繁體中文總結這次分析的結論。
+8. web_search 的結果僅供參考背景與事件脈絡，股價/財報/籌碼數字一律以其他固定工具
+   （technical_analysis/fundamental_analysis/chip_analysis/company_financial_summary）為準；
+   company_announcements 與 company_financial_summary 只有「今天/最新一期」的資料，不能拿來回答歷史問題。
 """
 
 

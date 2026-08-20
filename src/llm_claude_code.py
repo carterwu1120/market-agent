@@ -34,6 +34,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ALL_TOOL_NAMES = [
     "sector_lookup", "theme_lookup", "technical_analysis", "fundamental_analysis",
     "chip_analysis", "company_news", "stock_history",
+    "web_search", "company_announcements", "company_financial_summary",
     "discord_message", "discord_dm", "gmail_draft", "gmail_send",
 ]
 
