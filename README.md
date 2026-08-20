@@ -199,7 +199,6 @@ uv run python -m src.cli
 
 ```
 market-agent/
-├── Dockerfile
 ├── pyproject.toml
 ├── .env.example
 ├── data/
@@ -279,4 +278,4 @@ market-agent/
 | 開放搜尋／官方揭露 | DuckDuckGo + TWSE MOPS OpenAPI |
 | 對話記憶／快取／股票快照／知識庫 | SQLite（本機單一檔案） |
 | Bot | discord.py 2.4+ |
-| 部署 | `uv run` 直接跑，或用 `Dockerfile` 自行 build image |
+| 部署 | `uv run python -m src.main` |

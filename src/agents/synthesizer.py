@@ -48,7 +48,10 @@ SYNTHESIS_SYSTEM = """你是一個專業的財經分析師 AI，負責整合多�
 10. 【時間標注】報告中已提供今日日期。
     - 禁止將非今日日期的新聞描述為「今日」；應使用新聞的實際發布日期。
     - 若今日為非交易日，股價須標注「截至最近交易日收盤」，嚴禁寫成「今日股價」。
-11. 報告末尾必須包含 CONCLUSION_SUMMARY: ... END_CONCLUSION 區塊，用 3-5 句繁體中文總結。
+11. 【MOPS 官方揭露限制】「今日重大訊息公告」與「最新一期財報」區塊來自 TWSE MOPS 官方 OpenAPI，
+    只有「今天」與「最新一季」的資料，沒有歷史。不可用來回答歷史問題，也不可推論成其他日期的公告。
+    若區塊為空，直接寫「今日無重大訊息公告」或「本季查無財報資料」，不得自行填充。
+12. 報告末尾必須包含 CONCLUSION_SUMMARY: ... END_CONCLUSION 區塊，用 3-5 句繁體中文總結。
 """
 
 SYNTHESIS_PROMPT = """以下是從各數據源收集到的最新資訊。數字表格已由系統程式直接產生（正確無誤），請根據這些資訊撰寫**文字分析**。
@@ -83,6 +86,12 @@ SYNTHESIS_PROMPT = """以下是從各數據源收集到的最新資訊。數字�
 === 籌碼面數據表（程式產生，數字已驗證）===
 {chip_summary}
 
+=== 今日重大訊息公告（TWSE MOPS 官方，只有今天）===
+{announcement_summary}
+
+=== 最新一期財報（TWSE MOPS 官方，只有最新一季）===
+{mops_financial_summary}
+
 === 法說會與技術新聞 ===
 {insight_summary}
 
@@ -103,6 +112,7 @@ SYNTHESIS_PROMPT = """以下是從各數據源收集到的最新資訊。數字�
 - 技術面：現價相對均線位置、動能研判、關鍵支撐壓力
 - 基本面：估值與獲利能力簡評
 - 籌碼面：法人動向解讀
+- 官方揭露：今日有無重大訊息公告、最新一期財報重點（若有資料才寫）
 
 ## 社群輿情與獨家技術亮點
 整合 PTT 與 CMoney 觀點，提煉投資人關注的核心議題
@@ -203,6 +213,40 @@ def _summarize_chip(data: list[dict]) -> str:
     return "\n".join(rows)
 
 
+def _summarize_announcements(data: list[dict]) -> str:
+    if not data:
+        return "今日無重大訊息公告"
+    parts = []
+    for item in data:
+        sym = item.get("symbol", "")
+        items = item.get("items", [])
+        if not items:
+            continue
+        lines = [f"**{sym}**"]
+        for it in items:
+            lines.append(f"  - [{it.get('date', '')} {it.get('time', '')}] {it.get('subject', '')}")
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts) if parts else "今日無重大訊息公告"
+
+
+def _summarize_mops_financials(data: list[dict]) -> str:
+    if not data:
+        return "本季查無財報資料"
+    skip = {"公司代號", "公司名稱", "出表日期"}
+    parts = []
+    for item in data:
+        sym = item.get("symbol", "")
+        fields = item.get("fields", {})
+        name = fields.get("公司名稱", "")
+        lines = [f"**{sym} {name}**"]
+        for k, v in fields.items():
+            if k in skip or not v:
+                continue
+            lines.append(f"  {k}: {v}")
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts) if parts else "本季查無財報資料"
+
+
 def _summarize_insights(data: list[dict]) -> str:
     if not data:
         return "無法說會/技術新聞資料"
@@ -270,6 +314,8 @@ async def write_report(
     chip_data: list[dict],
     insight_data: list[dict],
     social_signals: list[dict],
+    announcement_data: list[dict],
+    mops_financial_data: list[dict],
     rag_context: str,
     sources: list[str],
 ) -> dict:
@@ -300,6 +346,8 @@ async def write_report(
             technical_summary=tech_table,
             fundamental_summary=fund_table,
             chip_summary=chip_table,
+            announcement_summary=_safe(_summarize_announcements(announcement_data)),
+            mops_financial_summary=_safe(_summarize_mops_financials(mops_financial_data)),
             insight_summary=_safe(_summarize_insights(insight_data)),
             market_indices_summary=indices_table,
             social_summary=_safe(_summarize_social(social_signals)),

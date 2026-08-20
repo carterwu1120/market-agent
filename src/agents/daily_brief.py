@@ -27,6 +27,12 @@ from src.tools.company_insight import get_company_insights
 from src.tools.chip_data import get_institutional_trading, get_margin_trading
 from src.tools.social_signal import fetch_ptt_stock, filter_signal_posts
 from src.tools.cmoney_forum import get_forum_posts
+from src.tools.mops_data import (
+    get_material_info_batch,
+    get_financial_summary_batch,
+    MATERIAL_INFO_URL,
+    INCOME_STATEMENT_URL,
+)
 from src.tools.knowledge_base import read_knowledge_base
 from src.agents.market_agent import _normalize_articles, _extract_hot_stocks
 from src.agents.synthesizer import write_report
@@ -156,6 +162,33 @@ async def _social(symbols: list[str]) -> tuple[list[dict], list[str]]:
     return post_dicts, sources
 
 
+async def _mops(symbols: list[str]) -> tuple[list[dict], list[dict], list[str]]:
+    """Today's official MOPS material-info announcements + latest-quarter financials."""
+    if not symbols:
+        return [], [], []
+
+    announcements, financials = await asyncio.gather(
+        get_material_info_batch(symbols),
+        get_financial_summary_batch(symbols),
+        return_exceptions=True,
+    )
+    if isinstance(announcements, Exception):
+        logger.warning(f"daily_brief MOPS announcements error: {announcements}")
+        announcements = {}
+    if isinstance(financials, Exception):
+        logger.warning(f"daily_brief MOPS financials error: {financials}")
+        financials = {}
+
+    announcement_data = [{"symbol": sym, "items": items} for sym, items in announcements.items() if items]
+    financial_data = [{"symbol": sym, "fields": fields} for sym, fields in financials.items()]
+    sources = []
+    if announcements:
+        sources.append(MATERIAL_INFO_URL)
+    if financials:
+        sources.append(INCOME_STATEMENT_URL)
+    return announcement_data, financial_data, sources
+
+
 async def run_daily_brief(user_message: str) -> dict:
     logger.info("daily_brief: fetching all data sources")
 
@@ -168,14 +201,18 @@ async def run_daily_brief(user_message: str) -> dict:
     )
 
     (technical_data, insight_data, tech_sources), (fundamental_data, fund_sources), \
-        (chip_data, chip_sources), (social_signals, social_sources) = await asyncio.gather(
+        (chip_data, chip_sources), (social_signals, social_sources), \
+        (announcement_data, mops_financial_data, mops_sources) = await asyncio.gather(
         _technical(hot_symbols),
         _fundamental(hot_symbols),
         _chip(hot_symbols),
         _social(hot_symbols),
+        _mops(hot_symbols),
     )
     rag_context = read_knowledge_base()
-    sources = list(set(news_sources + tech_sources + fund_sources + chip_sources + social_sources))
+    sources = list(set(
+        news_sources + tech_sources + fund_sources + chip_sources + social_sources + mops_sources
+    ))
 
     return await write_report(
         user_message=user_message,
@@ -187,6 +224,8 @@ async def run_daily_brief(user_message: str) -> dict:
         chip_data=chip_data,
         insight_data=insight_data,
         social_signals=social_signals,
+        announcement_data=announcement_data,
+        mops_financial_data=mops_financial_data,
         rag_context=rag_context,
         sources=sources,
     )

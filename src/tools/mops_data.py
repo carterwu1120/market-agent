@@ -6,6 +6,12 @@ openapi.twse.com.tw's swagger spec) — so this fetches the full day's dump and
 filters by 公司代號 locally. This only ever answers "today" / "latest
 quarter"; it cannot answer historical questions. Real history would need a
 daily ingestion job snapshotting these into SQLite over time (not built here).
+
+Single-symbol functions (get_material_info/get_financial_summary) are used by
+the react MCP tools, which fetch on demand for one ticker at a time. The
+_batch variants are used by daily_brief's fan-out, which needs several tickers
+at once — they share one whole-market fetch across all requested symbols
+instead of re-downloading the same dump once per ticker.
 """
 
 from __future__ import annotations
@@ -13,25 +19,31 @@ from __future__ import annotations
 import httpx
 from loguru import logger
 
-_MATERIAL_INFO_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap04_L"
-_INCOME_STATEMENT_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_ci"
+MATERIAL_INFO_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap04_L"
+INCOME_STATEMENT_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_ci"
 
 
 def _code(symbol: str) -> str:
     return symbol.replace(".TW", "").replace(".tw", "")
 
 
+async def _fetch_market_dump(url: str) -> list[dict] | None:
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as exc:
+        logger.warning(f"MOPS dump fetch failed [{url}]: {exc}")
+        return None
+
+
 async def get_material_info(symbol: str) -> dict:
     """Today's 重大訊息公告 for this ticker (empty items list if none today)."""
     code = _code(symbol)
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(_MATERIAL_INFO_URL)
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception as exc:
-        logger.warning(f"MOPS material info fetch failed [{code}]: {exc}")
-        return {"symbol": code, "error": str(exc)}
+    data = await _fetch_market_dump(MATERIAL_INFO_URL)
+    if data is None:
+        return {"symbol": code, "error": "fetch failed"}
 
     items = [d for d in data if d.get("公司代號") == code]
     return {
@@ -40,7 +52,7 @@ async def get_material_info(symbol: str) -> dict:
             {"date": d.get("發言日期", ""), "time": d.get("發言時間", ""), "subject": d.get("主旨", "")}
             for d in items
         ],
-        "source": _MATERIAL_INFO_URL,
+        "source": MATERIAL_INFO_URL,
     }
 
 
@@ -53,16 +65,46 @@ async def get_financial_summary(symbol: str) -> dict:
     avoids silently mis-mapping one that doesn't exist.
     """
     code = _code(symbol)
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(_INCOME_STATEMENT_URL)
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception as exc:
-        logger.warning(f"MOPS financial summary fetch failed [{code}]: {exc}")
-        return {"symbol": code, "error": str(exc)}
+    data = await _fetch_market_dump(INCOME_STATEMENT_URL)
+    if data is None:
+        return {"symbol": code, "error": "fetch failed"}
 
     match = next((d for d in data if d.get("公司代號") == code), None)
     if not match:
         return {"symbol": code, "error": "本季查無此公司財報資料"}
-    return {"symbol": code, "fields": match, "source": _INCOME_STATEMENT_URL}
+    return {"symbol": code, "fields": match, "source": INCOME_STATEMENT_URL}
+
+
+async def get_material_info_batch(symbols: list[str]) -> dict[str, list[dict]]:
+    """Today's 重大訊息公告 for multiple tickers, sharing one whole-market fetch.
+
+    Keys match the input `symbols` list exactly (e.g. "2330.TW").
+    """
+    code_to_symbol = {_code(s): s for s in symbols}
+    data = await _fetch_market_dump(MATERIAL_INFO_URL)
+    if data is None:
+        return {}
+    result: dict[str, list[dict]] = {s: [] for s in symbols}
+    for d in data:
+        code = d.get("公司代號")
+        if code in code_to_symbol:
+            result[code_to_symbol[code]].append(
+                {"date": d.get("發言日期", ""), "time": d.get("發言時間", ""), "subject": d.get("主旨", "")}
+            )
+    return result
+
+
+async def get_financial_summary_batch(symbols: list[str]) -> dict[str, dict]:
+    """Latest-quarter 綜合損益表 for multiple tickers, sharing one whole-market fetch.
+
+    Keys match the input `symbols` list (only symbols with a match present).
+    """
+    code_to_symbol = {_code(s): s for s in symbols}
+    data = await _fetch_market_dump(INCOME_STATEMENT_URL)
+    if data is None:
+        return {}
+    return {
+        code_to_symbol[d["公司代號"]]: d
+        for d in data
+        if d.get("公司代號") in code_to_symbol
+    }
