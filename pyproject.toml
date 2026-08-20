@@ -22,9 +22,13 @@ dependencies = [
     "pandas>=2.2.0",
     "numpy>=1.26.0",
     "pandas-ta>=0.3.14b",        # TA indicators (no TA-Lib C dep)
+    "scipy>=1.11.0",             # numba's LAPACK bindings for pandas-ta's JIT'd
+                                  # indicators (sma/bbands) need this at runtime,
+                                  # even though nothing here imports it directly
+                                  # (was previously a transitive dep via
+                                  # sentence-transformers/scikit-learn; dropping
+                                  # that pulled scipy out too and broke this)
     # Memory & storage: local SQLite via stdlib sqlite3, no extra dependency
-    # RAG / embeddings
-    "sentence-transformers>=3.0.0",
     # Discord bot
     "discord.py>=2.4.0",
     # Gmail

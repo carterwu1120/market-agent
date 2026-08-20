@@ -270,7 +270,7 @@ async def write_report(
     chip_data: list[dict],
     insight_data: list[dict],
     social_signals: list[dict],
-    rag_context: list[dict],
+    rag_context: str,
     sources: list[str],
 ) -> dict:
     logger.info("Synthesizer: generating report")
@@ -281,7 +281,7 @@ async def write_report(
     def _safe(text: str) -> str:
         return text.replace("{", "{{").replace("}", "}}")
 
-    rag_text = "\n".join(r.get("content", "") for r in rag_context) or "無補充資料"
+    rag_text = rag_context or "無補充資料"
 
     # Pre-render data tables (these will be inserted directly, bypassing LLM)
     tech_table = _summarize_technical(technical_data)

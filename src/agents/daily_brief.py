@@ -27,7 +27,7 @@ from src.tools.company_insight import get_company_insights
 from src.tools.chip_data import get_institutional_trading, get_margin_trading
 from src.tools.social_signal import fetch_ptt_stock, filter_signal_posts
 from src.tools.cmoney_forum import get_forum_posts
-from src.rag.knowledge_store import search_knowledge
+from src.tools.knowledge_base import read_knowledge_base
 from src.agents.market_agent import _normalize_articles, _extract_hot_stocks
 from src.agents.synthesizer import write_report
 
@@ -156,15 +156,6 @@ async def _social(symbols: list[str]) -> tuple[list[dict], list[str]]:
     return post_dicts, sources
 
 
-async def _rag(user_message: str, symbols: list[str]) -> list[dict]:
-    query = f"{user_message} {' '.join(symbols)}" if symbols else user_message
-    try:
-        return await search_knowledge(query, top_k=5)
-    except Exception as exc:
-        logger.warning(f"daily_brief RAG search failed: {exc}")
-        return []
-
-
 async def run_daily_brief(user_message: str) -> dict:
     logger.info("daily_brief: fetching all data sources")
 
@@ -177,13 +168,13 @@ async def run_daily_brief(user_message: str) -> dict:
     )
 
     (technical_data, insight_data, tech_sources), (fundamental_data, fund_sources), \
-        (chip_data, chip_sources), (social_signals, social_sources), rag_context = await asyncio.gather(
+        (chip_data, chip_sources), (social_signals, social_sources) = await asyncio.gather(
         _technical(hot_symbols),
         _fundamental(hot_symbols),
         _chip(hot_symbols),
         _social(hot_symbols),
-        _rag(user_message, hot_symbols),
     )
+    rag_context = read_knowledge_base()
     sources = list(set(news_sources + tech_sources + fund_sources + chip_sources + social_sources))
 
     return await write_report(

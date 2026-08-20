@@ -62,17 +62,6 @@ CREATE TABLE IF NOT EXISTS stock_daily_fundamental (
     fetched_at TEXT NOT NULL,
     PRIMARY KEY (symbol, date)
 );
-
-CREATE TABLE IF NOT EXISTS knowledge_chunks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    doc_id TEXT NOT NULL,
-    chunk_index INTEGER NOT NULL,
-    content TEXT NOT NULL,
-    meta TEXT NOT NULL DEFAULT '{}',
-    embedding BLOB NOT NULL,
-    created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_doc_id ON knowledge_chunks(doc_id);
 """
 
 

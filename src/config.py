@@ -5,9 +5,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # Embedding (local only — sentence-transformers, no API key needed)
-    embedding_model: str = "BAAI/bge-m3"
-
     # Discord
     discord_bot_token: str = ""
     discord_guild_id: str = ""

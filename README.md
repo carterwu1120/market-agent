@@ -15,7 +15,7 @@
 - 📊 **基本面分析** — PE、PB、EPS、ROE、分析師評等（Yahoo Finance）；本機 SQLite 快取 24 小時 ✅
 - 🧩 **籌碼面分析** — 三大法人買賣超（TWSE 公開 API）✅ | 融資融券 ⚠️ API 不穩定
 - 💬 **社群訊號** — PTT Stock 板關鍵字監控（大單、訂單、法說等）
-- 🧠 **RAG 知識庫** — 本機 SQLite + numpy 餘弦相似度搜尋，自訂技術分析知識（不需要額外啟動任何 DB 服務）
+- 📚 **知識庫** — `data/knowledge_base/` 放個人技術分析筆記，daily_brief 每次直接整篇讀入 prompt 當背景知識，內容量小不需要向量搜尋
 - 💾 **頻道共用對話記憶** — SQLite session 以頻道為單位共享，每則訊息附帶 `[username]` 前綴，LLM 能辨別不同使用者的發言並判斷是否為接話；每輪回覆儲存 `conclusion`、`symbols`、`intent`，支援跨使用者的 follow-up（「那聯發科呢？」即使是不同人問也能繼承話題）
 - 🔍 **ReAct 研究模式** — 複雜/比較型問題（「比較半導體和航運哪個強」「找最值得買的機器人股」）自動進入 ReAct loop，LLM 自主決定呼叫哪些工具、呼叫幾次，直到得出結論；注入對話歷史，支援跨輪比較
 - 📣 **法說會與技術新聞** — 鉅亨網個股搜尋，優先抓法說會、技術突破、產品相關報導，作為「獨家技術亮點」段落的唯一來源
@@ -31,7 +31,7 @@
 ```mermaid
 flowchart TD
     subgraph MEM["記憶層跨輪對話"]
-        SQLITE["本機 SQLite\nsession 歷史 · 股票快照 · RAG 向量"]
+        SQLITE["本機 SQLite\nsession 歷史 · 股票快照"]
     end
 
     USER([使用者輸入]) --> CLS
@@ -50,8 +50,9 @@ flowchart TD
 
     subgraph DB["run_daily_brief()（固定平行抓取，非 LLM 決策）"]
         NEWS["新聞快取/爬取\n+ 熱門股萃取"] --> FANOUT
-        FANOUT["asyncio.gather 平行執行"] --> TA["技術面"] & FA["基本面"] & CA["籌碼面"] & SA["社群訊號"] & RAGA["RAG 知識庫"]
-        TA & FA & CA & SA & RAGA --> SYN["write_report()\nLLM 整合報告 · 解析 conclusion"]
+        FANOUT["asyncio.gather 平行執行"] --> TA["技術面"] & FA["基本面"] & CA["籌碼面"] & SA["社群訊號"]
+        TA & FA & CA & SA --> KB["知識庫\nread_knowledge_base() 讀取檔案原文"]
+        KB --> SYN["write_report()\nLLM 整合報告 · 解析 conclusion"]
     end
 
     RA -->|直接輸出| END([最終報告\n儲存 symbols · intent · conclusion → SQLite])
@@ -72,7 +73,7 @@ flowchart TD
 | 檔案 | 職責 |
 |------|------|
 | [`pipeline.py`](src/agents/pipeline.py) | intent 分類（規則 + LLM fallback）、`run_agent()` 對外入口、錯誤處理 |
-| [`daily_brief.py`](src/agents/daily_brief.py) | daily_brief 的固定抓取流程：新聞、熱門股萃取、技術/基本面/籌碼/社群/RAG 平行抓取 |
+| [`daily_brief.py`](src/agents/daily_brief.py) | daily_brief 的固定抓取流程：新聞、熱門股萃取、技術/基本面/籌碼/社群平行抓取 + 知識庫讀取 |
 | [`research_agent.py`](src/agents/research_agent.py) | react 的 ReAct 迴圈，組裝對話歷史後交給 Claude Code 原生 tool-calling |
 | [`synthesizer.py`](src/agents/synthesizer.py) | `write_report()`：把 daily_brief 蒐集到的資料整理成表格 + 呼叫 LLM 生成分析文字 |
 | [`market_agent.py`](src/agents/market_agent.py) | 熱門股萃取用的輔助函數（TWSE 代號表快取、候選股篩選、LLM 選股）|
@@ -86,6 +87,9 @@ flowchart TD
 | `technical_analysis(symbol)` | `stock_data.get_technical_indicators()` |
 | `fundamental_analysis(symbol)` | `stock_data.get_fundamental_data()` |
 | `company_news(symbol)` | `company_insight.get_company_insights()` |
+| `web_search(query, max_results)` | `web_search.search_web()`（自己下關鍵字，僅供參考背景） |
+| `company_announcements(symbol)` | `mops_data.get_material_info()`（TWSE MOPS，只有今天） |
+| `company_financial_summary(symbol)` | `mops_data.get_financial_summary()`（TWSE MOPS，只有最新一季） |
 
 > 完整清單（含 Discord/Gmail 訊息工具）見 [`src/mcp_server.py`](src/mcp_server.py)。
 
@@ -117,15 +121,9 @@ uv sync
 uv run python -m src.main
 ```
 
-> 記憶、快取、RAG 知識庫都是本機一個 SQLite 檔案（`data/market_agent.db`，可用 `DB_PATH` 調整），不需要另外啟動任何資料庫服務。
+> 記憶、快取都是本機一個 SQLite 檔案（`data/market_agent.db`，可用 `DB_PATH` 調整），不需要另外啟動任何資料庫服務。知識庫（`data/knowledge_base/`）放檔案進去就直接生效，不需要初始化指令。
 
-### 3. 初始化知識庫（首次，或每次新增知識庫文件後）
-
-```bash
-uv run python scripts/init_knowledge_base.py
-```
-
-### 4. 使用 Discord Bot
+### 3. 使用 Discord Bot
 
 在 Discord 中：
 
@@ -178,7 +176,7 @@ uv run python -m src.cli
 | `/help` | 顯示說明 |
 | 直接輸入問題 | 自由對話（支援 follow-up） |
 
-> CLI 與 Discord Bot 使用同一套 `run_agent` pipeline，行為完全一致。記憶／快取／RAG 都是本機 SQLite 檔案，沒有額外服務需要啟動。
+> CLI 與 Discord Bot 使用同一套 `run_agent` pipeline，行為完全一致。記憶／快取都是本機 SQLite 檔案，沒有額外服務需要啟動。
 
 ---
 
@@ -191,7 +189,7 @@ uv run python -m src.cli
 | 用途 | 函數 | 機制 | 使用位置 |
 |------|------|------|---------|
 | 單次分類/擷取/報告生成（無工具） | `claude_code_chat()` | `claude -p --tools ""`，純文字 in/out | pipeline（intent 分類）、market_agent（熱門股擷取）、synthesizer（報告生成）|
-| 需要即時查資料的 ReAct 迴圈 | `claude_code_research()` | `claude -p --mcp-config`，Claude Code 用原生 MCP tool-calling 呼叫 [`src/mcp_server.py`](src/mcp_server.py) 暴露的 11 個工具 | research_agent |
+| 需要即時查資料的 ReAct 迴圈 | `claude_code_research()` | `claude -p --mcp-config`，Claude Code 用原生 MCP tool-calling 呼叫 [`src/mcp_server.py`](src/mcp_server.py) 暴露的 14 個工具 | research_agent |
 
 > **為什麼分兩種**：早期曾嘗試用純文字 prompt 要求 `claude -p` 輸出 `{"action": "...", "args": {...}}` 這種自訂 JSON 協議來模擬 tool-calling，實測約 30–40% 時候會失敗——`claude -p` 背後是完整的 agent runtime，不是單純的文字補全 API，遇到「不確定工具是否真的存在」的情境會自行幻想/扮演整個工具呼叫與回傳結果。改用真正的 MCP tool-calling 後，這個失敗模式完全消失（測試中連續 10/10 次正確執行，含多工具串接）。單次分類這類「不需要工具」的呼叫則沒有這個問題，維持純文字 `claude -p` 即可穩定運作。
 
@@ -205,15 +203,13 @@ market-agent/
 ├── pyproject.toml
 ├── .env.example
 ├── data/
-│   ├── market_agent.db          # 本機 SQLite（session/快取/股票快照/RAG，執行後自動建立）
-│   └── knowledge_base/          # 放 .md/.txt 會自動被 RAG 索引
-├── scripts/
-│   └── init_knowledge_base.py   # 初始化知識庫
+│   ├── market_agent.db          # 本機 SQLite（session/快取/股票快照，執行後自動建立）
+│   └── knowledge_base/          # 放 .md/.txt，daily_brief 會整篇讀入
 └── src/
     ├── main.py                  # 啟動入口
     ├── config.py                # 所有設定（pydantic-settings）
     ├── llm_claude_code.py       # Claude Code CLI 後端（claude_code_chat / claude_code_research）
-    ├── mcp_server.py            # MCP server：暴露 11 個工具給 claude -p --mcp-config 呼叫
+    ├── mcp_server.py            # MCP server：暴露 14 個工具給 claude -p --mcp-config 呼叫
     ├── agents/
     │   ├── pipeline.py          # ★ intent 分類 + run_agent() 對外入口
     │   ├── daily_brief.py       # daily_brief 固定平行抓取流程
@@ -227,15 +223,15 @@ market-agent/
     │   ├── social_signal.py     # PTT scraper
     │   ├── sector_data.py       # TWSE ISIN 類股查詢（官方產業分類）
     │   ├── cmoney_concept.py    # CMoney 概念股爬蟲（159 個主題分類）
-    │   └── theme_search.py      # 主題搜尋（CMoney 優先 + 新聞 fallback）
+    │   ├── theme_search.py      # 主題搜尋（CMoney 優先 + 新聞 fallback）
+    │   ├── web_search.py        # 開放網頁搜尋（DuckDuckGo）
+    │   ├── mops_data.py         # TWSE MOPS 官方揭露（重大訊息/財報，今日快照）
+    │   └── knowledge_base.py    # 讀取 data/knowledge_base/ 檔案原文
     ├── memory/
     │   ├── store.py             # SQLite schema + connection helper
     │   ├── cache_store.py       # 通用 TTL 快取（新聞/股票 API）
     │   ├── session_store.py     # 頻道對話 session（SQLite）
     │   └── stock_store.py       # 每日股票快照 upsert + 歷史查詢
-    ├── rag/
-    │   ├── embedder.py          # sentence-transformers（本機）
-    │   └── knowledge_store.py   # SQLite + numpy 餘弦相似度搜尋
     └── bot/
         └── discord_bot.py       # Discord slash commands + 訊息處理
 ```
@@ -251,10 +247,7 @@ market-agent/
 
 ### 新增知識庫文件
 
-把 `.md` 或 `.txt` 放進 `data/knowledge_base/`，重新執行：
-```bash
-uv run python scripts/init_knowledge_base.py
-```
+把 `.md` 或 `.txt` 放進 `data/knowledge_base/` 就好，下次 `/brief` 或排程報告執行時會自動整篇讀入，不需要額外指令。
 
 ### 新增 Telegram 支援
 
@@ -283,7 +276,7 @@ uv run python scripts/init_knowledge_base.py
 | 台股籌碼 | TWSE 公開 API, goodinfo scraper |
 | 新聞 | feedparser (RSS), NewsAPI |
 | 社群訊號 | httpx + BeautifulSoup (PTT) |
-| 向量搜尋 | SQLite (BLOB) + numpy + sentence-transformers (BAAI/bge-m3) |
-| 對話記憶／快取／股票快照 | SQLite（本機單一檔案） |
+| 開放搜尋／官方揭露 | DuckDuckGo + TWSE MOPS OpenAPI |
+| 對話記憶／快取／股票快照／知識庫 | SQLite（本機單一檔案） |
 | Bot | discord.py 2.4+ |
 | 部署 | `uv run` 直接跑，或用 `Dockerfile` 自行 build image |
