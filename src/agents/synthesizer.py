@@ -53,6 +53,10 @@ SYNTHESIS_SYSTEM = """你是一個專業的財經分析師 AI，負責整合多�
     只有「今天」與「最新一季」的資料，沒有歷史。不可用來回答歷史問題，也不可推論成其他日期的公告。
     若區塊為空，直接寫「今日無重大訊息公告」或「本季查無財報資料」，不得自行填充。
 12. 報告末尾必須包含 CONCLUSION_SUMMARY: ... END_CONCLUSION 區塊，用 3-5 句繁體中文總結。
+13. 【美股/商品對應參考限制】「相關美股/商品參考」區塊是依今日熱門股的官方產業別，
+    對應到相關的美股 ETF/指數/期貨（例如半導體業對應費城半導體指數）。這只是同產業的
+    國際連動參考，不是台股本身的數字，不可拿來當台股價格引用。若某支股票的產業沒有
+    對應資料出現在這個區塊，代表沒有可靠的對應關係，不可自行臆測有沒有關聯。
 """
 
 SYNTHESIS_PROMPT = """以下是從各數據源收集到的最新資訊。數字表格已由系統程式直接產生（正確無誤），請根據這些資訊撰寫**文字分析**。
@@ -77,6 +81,9 @@ SYNTHESIS_PROMPT = """以下是從各數據源收集到的最新資訊。數字�
 
 === 大盤指數（程式產生，數字已驗證）===
 {market_indices_summary}
+
+=== 相關美股/商品參考（依今日熱門股所屬產業對應，程式產生，數字已驗證）===
+{us_sector_summary}
 
 === 技術面數據表（程式產生，數字已驗證）===
 {technical_summary}
@@ -114,6 +121,8 @@ SYNTHESIS_PROMPT = """以下是從各數據源收集到的最新資訊。數字�
 - 基本面：估值與獲利能力簡評
 - 籌碼面：法人動向解讀
 - 官方揭露：今日有無重大訊息公告、最新一期財報重點（若有資料才寫）
+- 國際連動：若「相關美股/商品參考」區塊有對應該股所屬產業的資料，簡述其參考意義
+  （無對應資料就不寫這項，不可自行猜測有沒有關聯）
 
 ## 社群輿情與獨家技術亮點
 整合 PTT 與 CMoney 觀點，提煉投資人關注的核心議題
@@ -285,6 +294,23 @@ def _summarize_indices(data: dict) -> str:
     return "\n".join(lines) if lines else "大盤指數資料暫時無法取得"
 
 
+def _summarize_us_sector_proxies(data: dict) -> str:
+    if not data:
+        return "無對應美股/商品參考資料"
+    lines = []
+    for name, info in data.items():
+        if info.get("error") or "change_pct" not in info:
+            continue
+        change = info["change_pct"]
+        arrow = "▲" if change >= 0 else "▼"
+        industries = "、".join(info.get("industries", []))
+        lines.append(
+            f"  {name}（對應台股產業：{industries}）: {info['close']:,} {arrow}{abs(change)}%"
+            f"  [{info.get('date', '')}]"
+        )
+    return "\n".join(lines) if lines else "無對應美股/商品參考資料"
+
+
 def _summarize_social(data: list[dict]) -> str:
     if not data:
         return "無社群訊號"
@@ -411,6 +437,7 @@ async def write_report(
     social_signals: list[dict],
     announcement_data: list[dict],
     mops_financial_data: list[dict],
+    us_sector_data: dict,
     rag_context: str,
     sources: list[str],
 ) -> dict:
@@ -429,6 +456,7 @@ async def write_report(
     fund_table = _summarize_fundamental(fundamental_data)
     chip_table = _summarize_chip(chip_data)
     indices_table = _summarize_indices(market_indices)
+    us_sector_table = _summarize_us_sector_proxies(us_sector_data)
 
     try:
         prompt = SYNTHESIS_PROMPT.format(
@@ -445,6 +473,7 @@ async def write_report(
             mops_financial_summary=_safe(_summarize_mops_financials(mops_financial_data)),
             insight_summary=_safe(_summarize_insights(insight_data)),
             market_indices_summary=_safe(indices_table),
+            us_sector_summary=_safe(us_sector_table),
             social_summary=_safe(_summarize_social(social_signals)),
             rag_context=_safe(rag_text),
         )

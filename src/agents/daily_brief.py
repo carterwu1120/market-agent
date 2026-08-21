@@ -36,6 +36,7 @@ from src.tools.stock_data import (
     get_stock_price,
     get_technical_indicators,
 )
+from src.tools.us_sector_proxy import get_us_sector_proxies
 
 
 async def _fetch_news() -> list[dict]:
@@ -189,6 +190,19 @@ async def _mops(symbols: list[str]) -> tuple[list[dict], list[dict], list[str]]:
     return announcement_data, financial_data, sources
 
 
+async def _us_sector_proxies(symbols: list[str]) -> tuple[dict, list[str]]:
+    """依今日熱門股所屬產業，抓對應的美股/大宗商品參考（見 us_sector_proxy.py）。"""
+    if not symbols:
+        return {}, []
+    try:
+        proxies = await get_us_sector_proxies(symbols)
+    except Exception as exc:
+        logger.warning(f"daily_brief US sector proxy error: {exc}")
+        return {}, []
+    sources = [v["source"] for v in proxies.values() if v.get("source")]
+    return proxies, sources
+
+
 async def run_daily_brief(user_message: str) -> dict:
     logger.info("daily_brief: fetching all data sources")
 
@@ -202,16 +216,19 @@ async def run_daily_brief(user_message: str) -> dict:
 
     (technical_data, insight_data, tech_sources), (fundamental_data, fund_sources), \
         (chip_data, chip_sources), (social_signals, social_sources), \
-        (announcement_data, mops_financial_data, mops_sources) = await asyncio.gather(
+        (announcement_data, mops_financial_data, mops_sources), \
+        (us_sector_data, us_sector_sources) = await asyncio.gather(
         _technical(hot_symbols),
         _fundamental(hot_symbols),
         _chip(hot_symbols),
         _social(hot_symbols),
         _mops(hot_symbols),
+        _us_sector_proxies(hot_symbols),
     )
     rag_context = read_knowledge_base()
     sources = list(set(
-        news_sources + tech_sources + fund_sources + chip_sources + social_sources + mops_sources
+        news_sources + tech_sources + fund_sources + chip_sources + social_sources
+        + mops_sources + us_sector_sources
     ))
 
     return await write_report(
@@ -226,6 +243,7 @@ async def run_daily_brief(user_message: str) -> dict:
         social_signals=social_signals,
         announcement_data=announcement_data,
         mops_financial_data=mops_financial_data,
+        us_sector_data=us_sector_data,
         rag_context=rag_context,
         sources=sources,
     )
