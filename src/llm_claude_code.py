@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
 from pathlib import Path
 
 from loguru import logger
@@ -100,22 +101,40 @@ async def _run_claude_cli(cmd: list[str], timeout: int, stdin_prompt: str) -> di
     once populated. `claude -p` reads the prompt from stdin when no positional
     prompt arg is given (confirmed live: `echo "..." | claude -p` works), so cmd
     must NOT include the prompt itself.
+
+    The prompt is written to a temp file and passed as the subprocess' real
+    stdin handle -- NOT asyncio.subprocess.PIPE + communicate(input=...).
+    Two live failures (both a garbled/truncated stdout JSONDecodeError on
+    large synthesis responses, ~8-10K output tokens) only appeared after
+    switching prompt delivery to a PIPE; asyncio's ProactorEventLoop on
+    Windows has known issues juggling a large concurrent stdin write against
+    a large stdout read within one communicate() call. Handing the child
+    process a real file to read from removes that concurrency entirely --
+    the OS serves stdin directly, no asyncio-side pumping needed.
     """
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=str(PROJECT_ROOT),
-    )
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(stdin_prompt)
+        stdin_path = f.name
+
     try:
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(input=stdin_prompt.encode()), timeout=timeout
-        )
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise ClaudeCodeError(f"claude CLI timed out after {timeout}s")
+        with open(stdin_path, "rb") as stdin_file:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=stdin_file,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(PROJECT_ROOT),
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                raise ClaudeCodeError(f"claude CLI timed out after {timeout}s")
+    finally:
+        Path(stdin_path).unlink(missing_ok=True)
 
     if proc.returncode != 0:
         raise ClaudeCodeError(f"claude CLI exited {proc.returncode}: {stderr.decode(errors='replace')}")
