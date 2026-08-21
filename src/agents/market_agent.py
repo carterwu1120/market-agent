@@ -17,7 +17,7 @@ _EXTRACT_SYSTEM = """你是台股選股助理。從候選個股清單中，挑�
 規則：
 - 只能從「候選清單」中的代號挑選，嚴禁自行新增清單外的代號
 - 只回傳台灣股票代號（4位數字），格式為 JSON array
-- 取 5-8 檔，優先選有具體事件（法說會、訂單、業績、產品發布）的個股
+- 取 3-5 檔，優先選有具體事件（法說會、訂單、業績、產品發布）的個股
 - 若候選清單不足 5 檔，全部回傳
 - 只回傳 JSON，例如：["2330", "2454", "3034"]
 """
@@ -160,7 +160,7 @@ async def _extract_hot_stocks(news_articles: list[dict]) -> list[str]:
             if re.match(r"^\d{4}$", str(c)) and str(c) in candidate_set
         ]
         logger.info(f"MarketAgent: extracted {len(symbols)} hot symbols from {len(candidates)} candidates")
-        return symbols[:8]
+        return symbols[:5]
     except Exception as exc:
         logger.warning(f"MarketAgent: hot stock extraction failed: {exc}")
         return []
