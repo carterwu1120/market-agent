@@ -72,7 +72,7 @@ async def get_stock_price(symbol: str) -> dict[str, Any]:
             "company_name": full_info.get("shortName") or full_info.get("longName") or "",
             "last_price": last_price,
             "prev_close": prev_close,
-            "change_pct": round(change_pct, 2) if change_pct else None,
+            "change_pct": round(change_pct, 2) if change_pct is not None else None,
             "volume": int(info.three_month_average_volume or 0),
             "market_cap": info.market_cap,
             "currency": info.currency,

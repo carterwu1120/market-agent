@@ -22,20 +22,36 @@ from loguru import logger
 MATERIAL_INFO_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap04_L"
 INCOME_STATEMENT_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_ci"
 
+# Whole-market dump is identical across calls within a short window (it's a
+# daily snapshot, not real-time) -- cache briefly so comparing several
+# tickers in one react conversation doesn't re-download the same multi-MB
+# dump once per symbol.
+_DUMP_CACHE_TTL = 300
+
 
 def _code(symbol: str) -> str:
-    return symbol.replace(".TW", "").replace(".tw", "")
+    return symbol.upper().replace(".TWO", "").replace(".TW", "")
 
 
 async def _fetch_market_dump(url: str) -> list[dict] | None:
+    from src.memory.cache_store import get_cached, set_cached
+
+    cache_key = f"mops:dump:{url}"
+    cached = await get_cached(cache_key)
+    if cached is not None:
+        return cached.get("items")
+
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(url)
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
     except Exception as exc:
         logger.warning(f"MOPS dump fetch failed [{url}]: {exc}")
         return None
+
+    await set_cached(cache_key, {"items": data}, _DUMP_CACHE_TTL)
+    return data
 
 
 async def get_material_info(symbol: str) -> dict:

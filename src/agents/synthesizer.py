@@ -378,7 +378,7 @@ async def write_weekend_digest(
     shown_count = min(len(news_articles), max_items)
     try:
         prompt = WEEKEND_DIGEST_PROMPT.format(
-            market_indices_summary=_summarize_indices(market_indices),
+            market_indices_summary=_safe(_summarize_indices(market_indices)),
             news_count=shown_count,
             news_summary=_safe(_summarize_news(news_articles, max_items=max_items)),
         )
@@ -438,13 +438,13 @@ async def write_report(
             query_context=query_context,
             news_count=len(news_articles),
             news_summary=_safe(_summarize_news(news_articles, symbols=target_symbols)),
-            technical_summary=tech_table,
-            fundamental_summary=fund_table,
-            chip_summary=chip_table,
+            technical_summary=_safe(tech_table),
+            fundamental_summary=_safe(fund_table),
+            chip_summary=_safe(chip_table),
             announcement_summary=_safe(_summarize_announcements(announcement_data)),
             mops_financial_summary=_safe(_summarize_mops_financials(mops_financial_data)),
             insight_summary=_safe(_summarize_insights(insight_data)),
-            market_indices_summary=indices_table,
+            market_indices_summary=_safe(indices_table),
             social_summary=_safe(_summarize_social(social_signals)),
             rag_context=_safe(rag_text),
         )

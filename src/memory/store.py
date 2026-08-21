@@ -29,6 +29,24 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at REAL NOT NULL
 );
 
+-- Permanent audit log: unlike `sessions` (a capped, expiring rolling window
+-- used as LLM context), every turn written here never expires and is never
+-- trimmed. `sessions` losing history after 20 messages / 1hr TTL is by
+-- design (context window sizing); this table exists so that loss doesn't
+-- also mean the conversation is gone forever.
+CREATE TABLE IF NOT EXISTS conversation_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    meta TEXT,
+    created_at REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_conversation_log_channel
+    ON conversation_log (channel_id, created_at);
+
 CREATE TABLE IF NOT EXISTS stock_daily_price (
     symbol TEXT NOT NULL,
     company_name TEXT NOT NULL DEFAULT '',

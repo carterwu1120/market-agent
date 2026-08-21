@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 
+from loguru import logger
 from mcp.server.mcpserver import MCPServer
 
 from src.tools.chip_data import get_institutional_trading, get_margin_trading
@@ -27,6 +28,20 @@ from src.tools.theme_search import search_theme_stocks
 from src.tools.web_search import search_web
 
 mcp = MCPServer("market-agent-tools")
+
+
+def _fire_and_forget(coro) -> None:
+    """asyncio.ensure_future without an awaiter drops exceptions as silent
+    'unretrieved task exception' log noise. Wrap so a failed background
+    upsert (e.g. this subprocess racing discord_bot.py's startup
+    init_storage() on a fresh checkout) is at least logged, not lost."""
+    async def _run():
+        try:
+            await coro
+        except Exception as exc:
+            logger.warning(f"mcp_server: background task failed: {exc}")
+
+    asyncio.ensure_future(_run())
 
 
 # ── 資料查詢 ──────────────────────────────────────────────────────────────
@@ -66,7 +81,7 @@ async def technical_analysis(symbol: str) -> str:
     price_ok = isinstance(price, dict) and not price.get("error")
     if price_ok:
         from src.memory.stock_store import upsert_daily_price
-        asyncio.ensure_future(upsert_daily_price([{
+        _fire_and_forget(upsert_daily_price([{
             "symbol": symbol,
             "price": price,
             "indicators": ind,
@@ -86,7 +101,7 @@ async def fundamental_analysis(symbol: str) -> str:
     if data.get("error"):
         return f"{symbol} 基本面資料取得失敗：{data['error']}"
     from src.memory.stock_store import upsert_daily_fundamental
-    asyncio.ensure_future(upsert_daily_fundamental([data]))
+    _fire_and_forget(upsert_daily_fundamental([data]))
     return (
         f"{symbol} {data.get('company_name', '')} | "
         f"PE: {data.get('pe_ratio')} | PB: {data.get('pb_ratio')} | "
@@ -122,7 +137,7 @@ async def chip_analysis(symbol: str) -> str:
 
     if inst_ok and margin_ok:
         from src.memory.stock_store import upsert_daily_chip
-        asyncio.ensure_future(upsert_daily_chip([{
+        _fire_and_forget(upsert_daily_chip([{
             "symbol": symbol,
             "institutional": inst,
             "margin": margin,
@@ -261,5 +276,15 @@ async def gmail_send(to: str, subject: str, body: str) -> str:
     return f"Email 已寄出至 {to}（message_id: {result.get('message_id')}）"
 
 
+def _init_storage_before_serving() -> None:
+    """This subprocess is spawned fresh per react call and races
+    discord_bot.py's own startup init_storage() — without this, a background
+    upsert here could hit a SQLite file with no tables yet on a first run."""
+    from src.memory.store import init_storage
+
+    asyncio.run(init_storage())
+
+
 if __name__ == "__main__":
+    _init_storage_before_serving()
     mcp.run(transport="stdio")

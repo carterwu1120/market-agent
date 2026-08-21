@@ -67,15 +67,26 @@ def _render_prompt(history: list[dict], user_message: str) -> str:
     return "\n\n".join(parts)
 
 
-async def _run_claude_cli(cmd: list[str], timeout: int) -> dict:
+async def _run_claude_cli(cmd: list[str], timeout: int, stdin_prompt: str) -> dict:
+    """Runs `claude -p` with the prompt piped via stdin rather than argv.
+
+    Windows' CreateProcess has a ~32K character command-line limit; daily_brief's
+    prompts (news + several symbols' tables + knowledge base) can exceed that
+    once populated. `claude -p` reads the prompt from stdin when no positional
+    prompt arg is given (confirmed live: `echo "..." | claude -p` works), so cmd
+    must NOT include the prompt itself.
+    """
     proc = await asyncio.create_subprocess_exec(
         *cmd,
+        stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(PROJECT_ROOT),
     )
     try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(input=stdin_prompt.encode()), timeout=timeout
+        )
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
@@ -114,12 +125,12 @@ async def claude_code_chat(
     prior = history[:-1] if user_message else history
     prompt = _render_prompt(prior, user_message) if prior else user_message
 
-    cmd = [CLAUDE_BIN, "-p", prompt, "--output-format", "json", "--tools", ""]
+    cmd = [CLAUDE_BIN, "-p", "--output-format", "json", "--tools", ""]
     if system:
         cmd += ["--system-prompt", system]
 
     logger.debug(f"claude_code_chat: invoking CLI (prompt_len={len(prompt)})")
-    payload = await _run_claude_cli(cmd, timeout)
+    payload = await _run_claude_cli(cmd, timeout, prompt)
     return payload.get("result", "")
 
 
@@ -140,14 +151,14 @@ async def claude_code_research(
     mcp_config_path.write_text(json.dumps(_mcp_config()))
 
     cmd = [
-        CLAUDE_BIN, "-p", prompt,
+        CLAUDE_BIN, "-p",
         "--output-format", "json",
         "--mcp-config", str(mcp_config_path),
         "--allowedTools", _allowed_tools(tool_names),
     ]
 
     logger.debug(f"claude_code_research: invoking CLI (prompt_len={len(prompt)})")
-    payload = await _run_claude_cli(cmd, timeout)
+    payload = await _run_claude_cli(cmd, timeout, prompt)
 
     denials = payload.get("permission_denials") or []
     if denials:

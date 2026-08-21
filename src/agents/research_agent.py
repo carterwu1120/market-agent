@@ -17,8 +17,21 @@ from loguru import logger
 
 from src.agents.report_utils import extract_conclusion
 from src.llm_claude_code import claude_code_research
+from src.tools.news_fetcher import _TICKER_NAMES
 
-REACT_SYSTEM = """你是一個台股研究分析師兼個人助理，可以使用以下工具：
+# Deterministic company-name -> ticker hints for react's system prompt.
+# Without this, ticker resolution for a named company relies entirely on
+# Claude's own world knowledge with no safety net against a wrong or stale
+# code (the old orchestrator had a dedicated lookup dict for this).
+_COMPANY_CODE_HINTS = "\n".join(
+    f"- {code}.TW：{'、'.join(names)}" for code, names in _TICKER_NAMES.items()
+)
+
+REACT_SYSTEM = f"""你是一個台股研究分析師兼個人助理，可以使用以下工具：
+
+【常見公司代號對照】（優先使用；不在表中的公司才依你自己的知識判斷，
+且務必用 sector_lookup/theme_lookup 或其他工具的回傳結果核對，不可憑空生成代號）
+{_COMPANY_CODE_HINTS}
 
 【資料查詢】
 - sector_lookup(keyword): 查 TWSE 官方產業類股（半導體、航運、金融…）

@@ -43,16 +43,16 @@ async def _fetch_news() -> list[dict]:
     if cached:
         articles = _normalize_articles(cached)
         logger.info(f"daily_brief: serving {len(articles)} articles from cache")
-        return articles
+        return articles[: settings.max_news_per_run]
 
     logger.info("daily_brief: cache miss — fetching from sources")
     raw = await fetch_all_news(settings.news_lookback_hours)
-    articles = _normalize_articles([asdict(a) for a in raw])
+    articles = _normalize_articles([asdict(a) for a in raw])[: settings.max_news_per_run]
     if articles:
         await save_news_cache(articles)
     else:
         logger.warning("daily_brief: news fetch returned nothing")
-    return articles[: settings.max_news_per_run]
+    return articles
 
 
 async def _technical(symbols: list[str]) -> tuple[list[dict], list[dict], list[str]]:

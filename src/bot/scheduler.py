@@ -48,65 +48,54 @@ _TZ = zoneinfo.ZoneInfo("Asia/Taipei")
 _bot = None
 
 
-async def _send_scheduled_report(slot: str) -> None:
-    if datetime.datetime.now(_TZ).weekday() >= 5:
-        logger.info(f"Scheduler [{slot}]: weekend, market closed, skipping")
+async def _dispatch_report(label: str, should_run: bool, skip_reason: str, generate) -> None:
+    """Shared logic behind every scheduled slot: day-check, channel lookup,
+    generate-and-send with a consistent error fallback. _send_scheduled_report
+    and _send_weekend_digest differ only in their day predicate and their
+    report generator, so a fix here (e.g. rate-limit handling) applies to
+    every slot at once instead of needing to be copied per function."""
+    if not should_run:
+        logger.info(f"Scheduler [{label}]: {skip_reason}, skipping")
         return
     if not settings.schedule_report_channel_id:
-        logger.warning(f"Scheduler [{slot}]: no channel configured, skipping")
+        logger.warning(f"Scheduler [{label}]: no channel configured, skipping")
         return
 
     channel = _bot.get_channel(int(settings.schedule_report_channel_id))
     if channel is None:
-        logger.error(f"Scheduler [{slot}]: channel {settings.schedule_report_channel_id} not found")
+        logger.error(f"Scheduler [{label}]: channel {settings.schedule_report_channel_id} not found")
         return
 
-    logger.info(f"Scheduler: running {slot} report")
+    logger.info(f"Scheduler: running {label} report")
     try:
-        result = await run_agent(
+        result = await generate()
+        report = result.get("final_report", "") or f"⚠️ 無法生成{label}報告，請稍後再試。"
+    except Exception as exc:
+        logger.error(f"Scheduler [{label}] error: {exc}", exc_info=True)
+        report = f"⚠️ {label}報告錯誤：{exc}"
+
+    for chunk in chunk_message(report):
+        await channel.send(chunk)
+
+    logger.info(f"Scheduler: {label} report sent to channel {settings.schedule_report_channel_id}")
+
+
+async def _send_scheduled_report(slot: str) -> None:
+    is_weekday = datetime.datetime.now(_TZ).weekday() < 5
+
+    async def generate():
+        return await run_agent(
             user_message=SLOT_PROMPTS[slot],
             user_id=settings.schedule_user_id,
             channel_id=settings.schedule_report_channel_id,
         )
-        report = result.get("final_report", "") or "⚠️ 無法生成排程報告，請稍後再試。"
-    except Exception as exc:
-        logger.error(f"Scheduler [{slot}] agent error: {exc}", exc_info=True)
-        report = f"⚠️ 排程報告錯誤：{exc}"
 
-    for chunk in chunk_message(report):
-        await channel.send(chunk)
-
-    logger.info(f"Scheduler: {slot} report sent to channel {settings.schedule_report_channel_id}")
+    await _dispatch_report(slot, is_weekday, "weekend, market closed", generate)
 
 
 async def _send_weekend_digest() -> None:
-    if datetime.datetime.now(_TZ).weekday() != 6:  # only Sunday
-        return
-    if not settings.schedule_report_channel_id:
-        logger.warning("Scheduler [weekend_digest]: no channel configured, skipping")
-        return
-
-    channel = _bot.get_channel(int(settings.schedule_report_channel_id))
-    if channel is None:
-        logger.error(
-            f"Scheduler [weekend_digest]: channel {settings.schedule_report_channel_id} not found"
-        )
-        return
-
-    logger.info("Scheduler: running weekend_digest report")
-    try:
-        result = await run_weekend_digest()
-        report = result.get("final_report", "") or "⚠️ 無法生成假日消息摘要，請稍後再試。"
-    except Exception as exc:
-        logger.error(f"Scheduler [weekend_digest] error: {exc}", exc_info=True)
-        report = f"⚠️ 假日消息摘要錯誤：{exc}"
-
-    for chunk in chunk_message(report):
-        await channel.send(chunk)
-
-    logger.info(
-        f"Scheduler: weekend_digest report sent to channel {settings.schedule_report_channel_id}"
-    )
+    is_sunday = datetime.datetime.now(_TZ).weekday() == 6
+    await _dispatch_report("weekend_digest", is_sunday, "not Sunday", run_weekend_digest)
 
 
 @tasks.loop(time=datetime.time(8, 30, tzinfo=_TZ))
