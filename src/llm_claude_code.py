@@ -42,6 +42,31 @@ class ClaudeCodeError(RuntimeError):
     pass
 
 
+def _parse_json_objects(raw: str) -> list[dict]:
+    """Parse one or more whitespace-separated JSON objects from raw text.
+
+    `claude -p --output-format json` is documented to emit exactly one JSON
+    object, but has been observed live to sometimes emit a second object
+    after it for very large/long-thinking responses (root cause unconfirmed
+    -- reproduction attempts with similarly large prompts didn't trigger it
+    reliably). Tolerate multiple objects rather than assuming exactly one;
+    the caller uses the last one, which matches every observed case where
+    the final object is the actual result event.
+    """
+    decoder = json.JSONDecoder()
+    objects = []
+    idx, length = 0, len(raw)
+    while idx < length:
+        while idx < length and raw[idx].isspace():
+            idx += 1
+        if idx >= length:
+            break
+        obj, end = decoder.raw_decode(raw, idx)
+        objects.append(obj)
+        idx = end
+    return objects
+
+
 def _mcp_config() -> dict:
     return {
         "mcpServers": {
@@ -96,8 +121,11 @@ async def _run_claude_cli(cmd: list[str], timeout: int, stdin_prompt: str) -> di
         raise ClaudeCodeError(f"claude CLI exited {proc.returncode}: {stderr.decode(errors='replace')}")
 
     try:
-        payload = json.loads(stdout.decode())
-    except json.JSONDecodeError as e:
+        objects = _parse_json_objects(stdout.decode())
+        if not objects:
+            raise ValueError("no JSON object found in output")
+        payload = objects[-1]
+    except (json.JSONDecodeError, ValueError) as e:
         raise ClaudeCodeError(f"failed to parse claude CLI output: {e}\nraw: {stdout[:500]!r}")
 
     if payload.get("is_error"):
