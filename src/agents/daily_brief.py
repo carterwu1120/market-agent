@@ -233,13 +233,21 @@ async def run_daily_brief(user_message: str) -> dict:
 
 async def run_weekend_digest() -> dict:
     """假日消息面摘要：台股休市，技術面/籌碼面/基本面不會有新數據，所以不抓；
-    只擴大時間窗抓新聞（涵蓋週五收盤後到現在），交給 LLM 判斷哪些事件可能影響週一開盤。
+    只擴大時間窗抓新聞（涵蓋週五收盤後到現在）+ 週五美股收盤指數（美股收盤時間
+    早於台股週一開盤，是有憑有據的最新盤前參考數據，不算「重複舊資料」），
+    交給 LLM 判斷哪些事件可能影響週一開盤。
     見 docs/adr/0001-drop-langgraph-delegate-to-claude-code.md 的決定性原則——
     這條路徑一樣是固定抓取，不讓 LLM 決定要不要查新聞。
     """
-    logger.info("weekend_digest: fetching news (72h lookback)")
-    raw = await fetch_all_news(lookback_hours=72)
+    logger.info("weekend_digest: fetching news (72h lookback) + latest market indices")
+    raw, indices = await asyncio.gather(
+        fetch_all_news(lookback_hours=72),
+        get_market_indices(),
+    )
     articles = _normalize_articles([asdict(a) for a in raw])
     sources = list({a["source_url"] for a in articles if a.get("source_url")})
+    for idx in indices.values():
+        if idx.get("source"):
+            sources.append(idx["source"])
 
-    return await write_weekend_digest(articles, sources)
+    return await write_weekend_digest(articles, indices, sources)

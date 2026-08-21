@@ -309,8 +309,13 @@ WEEKEND_DIGEST_SYSTEM = """你是一個專業財經分析師 AI，負責整理�
 判斷有哪些事件可能影響週一台股開盤。
 
 【核心限制：嚴禁使用訓練知識補充數據】
-所有事件、新聞內容必須 100% 來自本次提供的新聞資料區塊。
+所有事件、新聞內容、指數數字必須 100% 來自本次提供的資料區塊。
 若新聞區塊為空，直接寫「本次未偵測到相關新聞」，絕對不可用訓練記憶中的舊聞或臆測填補。
+
+【美股收盤指數使用規則】
+「上週五收盤主要指數」區塊中的數字是程式即時從 Yahoo Finance 抓取的真實收盤值。
+引用時必須原封不動照抄，不可自行修改、四捨五入至不同位數、或用訓練記憶中的指數點位替換。
+美股收盤時間早於台股開盤，是有憑有據的最新盤前參考數據，須明確納入分析（尤其留意費半、那斯達克這類與台股電子權值股連動較高的指數）。
 
 規則：
 1. 只整理新聞區塊中實際存在的新聞，每則引用必須標注實際發布日期與來源
@@ -323,7 +328,10 @@ WEEKEND_DIGEST_SYSTEM = """你是一個專業財經分析師 AI，負責整理�
 6. 報告末尾必須包含 CONCLUSION_SUMMARY: ... END_CONCLUSION 區塊，用 3-5 句繁體中文總結
 """
 
-WEEKEND_DIGEST_PROMPT = """以下是週五收盤後到現在（假日期間）收集到的新聞與消息面資訊。
+WEEKEND_DIGEST_PROMPT = """以下是週五收盤後到現在（假日期間）收集到的新聞、消息面與美股收盤資訊。
+
+=== 上週五收盤主要指數（程式產生，數字已驗證）===
+{market_indices_summary}
 
 === 新聞（{news_count} 則，附發布日期與來源）===
 {news_summary}
@@ -331,25 +339,32 @@ WEEKEND_DIGEST_PROMPT = """以下是週五收盤後到現在（假日期間）�
 ---
 請依以下結構撰寫假日消息面摘要：
 
+## 美股與大盤指數回顧
+根據上方指數表格，簡述週五美股主要指數收盤表現，以及對台股相關聯動類股
+（如半導體、AI 供應鏈）的參考意義
+
 ## 本週末重點消息
 列出實際有市場相關性的事件（標注日期與來源），依重要性排序
 
 ## 潛在市場影響
-針對上面列出的每個重點事件，判斷是否可能影響週一台股開盤，以及可能的影響方向（正面/負面/不明朗）
+針對上面列出的每個重點事件（含美股指數表現），判斷是否可能影響週一台股開盤，以及可能的影響方向（正面/負面/不明朗）
 
 ## 週一開盤前建議關注
 給出 2-3 點提醒，供週一盤前參考
 
 ---
 CONCLUSION_SUMMARY:
-（3-5 句繁體中文總結：本週末最值得關注的事件、對台股可能的影響方向）
+（3-5 句繁體中文總結：本週末最值得關注的事件、美股收盤表現、對台股可能的影響方向）
 END_CONCLUSION
 """
 
 
-async def write_weekend_digest(news_articles: list[dict], sources: list[str]) -> dict:
-    """假日消息面摘要：不含技術面/籌碼面等當日盤中數據（市場休市，沒有新數據），
-    只整理新聞，交由 LLM 判斷哪些事件可能影響週一開盤。"""
+async def write_weekend_digest(
+    news_articles: list[dict], market_indices: dict, sources: list[str]
+) -> dict:
+    """假日消息面摘要：不含台股技術面/籌碼面等當日盤中數據（市場休市，沒有新數據），
+    但納入週五美股收盤指數（有效的最新盤前參考數據）+ 新聞，
+    交由 LLM 判斷哪些事件可能影響週一開盤。"""
     logger.info("Synthesizer: generating weekend digest")
 
     def _safe(text: str) -> str:
@@ -363,6 +378,7 @@ async def write_weekend_digest(news_articles: list[dict], sources: list[str]) ->
     shown_count = min(len(news_articles), max_items)
     try:
         prompt = WEEKEND_DIGEST_PROMPT.format(
+            market_indices_summary=_summarize_indices(market_indices),
             news_count=shown_count,
             news_summary=_safe(_summarize_news(news_articles, max_items=max_items)),
         )
