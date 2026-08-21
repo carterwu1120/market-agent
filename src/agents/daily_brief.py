@@ -15,7 +15,7 @@ from dataclasses import asdict
 from loguru import logger
 
 from src.agents.market_agent import _extract_hot_stocks, _normalize_articles
-from src.agents.synthesizer import write_report
+from src.agents.synthesizer import write_report, write_weekend_digest
 from src.config import settings
 from src.memory.news_cache import load_news_cache, save_news_cache
 from src.tools.chip_data import get_institutional_trading, get_margin_trading
@@ -229,3 +229,17 @@ async def run_daily_brief(user_message: str) -> dict:
         rag_context=rag_context,
         sources=sources,
     )
+
+
+async def run_weekend_digest() -> dict:
+    """假日消息面摘要：台股休市，技術面/籌碼面/基本面不會有新數據，所以不抓；
+    只擴大時間窗抓新聞（涵蓋週五收盤後到現在），交給 LLM 判斷哪些事件可能影響週一開盤。
+    見 docs/adr/0001-drop-langgraph-delegate-to-claude-code.md 的決定性原則——
+    這條路徑一樣是固定抓取，不讓 LLM 決定要不要查新聞。
+    """
+    logger.info("weekend_digest: fetching news (72h lookback)")
+    raw = await fetch_all_news(lookback_hours=72)
+    articles = _normalize_articles([asdict(a) for a in raw])
+    sources = list({a["source_url"] for a in articles if a.get("source_url")})
+
+    return await write_weekend_digest(articles, sources)

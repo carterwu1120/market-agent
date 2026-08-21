@@ -305,6 +305,84 @@ def _summarize_social(data: list[dict]) -> str:
     return "\n".join(lines)
 
 
+WEEKEND_DIGEST_SYSTEM = """你是一個專業財經分析師 AI，負責整理假日期間的消息面，
+判斷有哪些事件可能影響週一台股開盤。
+
+【核心限制：嚴禁使用訓練知識補充數據】
+所有事件、新聞內容必須 100% 來自本次提供的新聞資料區塊。
+若新聞區塊為空，直接寫「本次未偵測到相關新聞」，絕對不可用訓練記憶中的舊聞或臆測填補。
+
+規則：
+1. 只整理新聞區塊中實際存在的新聞，每則引用必須標注實際發布日期與來源
+2. 特別關注：地緣政治風險（如戰爭、制裁、外交衝突）、總體經濟事件（央行利率決議、通膨數據）、
+   台股權值股所屬供應鏈的國際大事（如半導體、AI 相關國際動態）
+3. 針對你認為重要的每個事件，明確說明「為什麼可能影響台股週一開盤」；
+   不確定就寫「影響尚不明朗」，不可臆測方向
+4. 沒有明顯市場相關性的一般新聞可以略過或簡短帶過，不必每則都詳述
+5. 語氣專業但易懂，使用繁體中文
+6. 報告末尾必須包含 CONCLUSION_SUMMARY: ... END_CONCLUSION 區塊，用 3-5 句繁體中文總結
+"""
+
+WEEKEND_DIGEST_PROMPT = """以下是週五收盤後到現在（假日期間）收集到的新聞與消息面資訊。
+
+=== 新聞（{news_count} 則，附發布日期與來源）===
+{news_summary}
+
+---
+請依以下結構撰寫假日消息面摘要：
+
+## 本週末重點消息
+列出實際有市場相關性的事件（標注日期與來源），依重要性排序
+
+## 潛在市場影響
+針對上面列出的每個重點事件，判斷是否可能影響週一台股開盤，以及可能的影響方向（正面/負面/不明朗）
+
+## 週一開盤前建議關注
+給出 2-3 點提醒，供週一盤前參考
+
+---
+CONCLUSION_SUMMARY:
+（3-5 句繁體中文總結：本週末最值得關注的事件、對台股可能的影響方向）
+END_CONCLUSION
+"""
+
+
+async def write_weekend_digest(news_articles: list[dict], sources: list[str]) -> dict:
+    """假日消息面摘要：不含技術面/籌碼面等當日盤中數據（市場休市，沒有新數據），
+    只整理新聞，交由 LLM 判斷哪些事件可能影響週一開盤。"""
+    logger.info("Synthesizer: generating weekend digest")
+
+    def _safe(text: str) -> str:
+        return text.replace("{", "{{").replace("}", "}}")
+
+    # Weekend pool is dominated by same-day TW RSS entries (fetch_all_news puts
+    # RSS first); _summarize_news's default max_items=10 would silently drop
+    # the international/macro articles (Bloomberg, FT, NewsAPI/GNews) the LLM
+    # actually needs to judge geopolitical risk. Send a much larger slice.
+    max_items = 60
+    shown_count = min(len(news_articles), max_items)
+    try:
+        prompt = WEEKEND_DIGEST_PROMPT.format(
+            news_count=shown_count,
+            news_summary=_safe(_summarize_news(news_articles, max_items=max_items)),
+        )
+        llm_analysis = await claude_code_chat(
+            messages=[{"role": "user", "content": prompt}],
+            system=WEEKEND_DIGEST_SYSTEM,
+        )
+    except Exception as exc:
+        logger.error(f"Weekend digest LLM failed: {exc}")
+        llm_analysis = f"⚠️ 假日消息摘要生成失敗：{exc}"
+
+    report, conclusion = extract_conclusion(llm_analysis)
+    return {
+        "final_report": report,
+        "conclusion": conclusion,
+        "sources": list(set(sources)),
+        "target_symbols": [],
+    }
+
+
 async def write_report(
     user_message: str,
     target_symbols: list[str],

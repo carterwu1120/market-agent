@@ -1,12 +1,19 @@
-"""Scheduled market reports — 盤前 / 盤中 / 收盤後.
+"""Scheduled market reports — 盤前 / 盤中 / 收盤後 / 假日消息摘要.
 
 Uses discord.ext.tasks (bundled with discord.py) to fire at fixed wall-clock
 times in Asia/Taipei timezone. No extra dependencies required.
 
 Times:
-  08:30 — pre_market  (盤前)
-  12:00 — mid_session (盤中)
-  14:30 — post_market (收盤後)
+  08:30 — pre_market     (盤前，平日)
+  12:00 — mid_session    (盤中，平日)
+  14:30 — post_market    (收盤後，平日)
+  20:00 — weekend_digest (假日消息摘要，只在週日送出)
+
+Taiwan stock market is closed Sat/Sun, so pre/mid/post_market skip weekends
+outright — their technical/chip data wouldn't have changed since Friday's
+close. weekend_digest replaces them on Sunday with a news-only summary
+that flags events (macro, geopolitical) that could move Monday's open —
+see run_weekend_digest() in src/agents/daily_brief.py.
 """
 
 from __future__ import annotations
@@ -17,6 +24,7 @@ import zoneinfo
 from discord.ext import tasks
 from loguru import logger
 
+from src.agents.daily_brief import run_weekend_digest
 from src.agents.pipeline import run_agent
 from src.bot.discord_bot import chunk_message
 from src.config import settings
@@ -41,6 +49,9 @@ _bot = None
 
 
 async def _send_scheduled_report(slot: str) -> None:
+    if datetime.datetime.now(_TZ).weekday() >= 5:
+        logger.info(f"Scheduler [{slot}]: weekend, market closed, skipping")
+        return
     if not settings.schedule_report_channel_id:
         logger.warning(f"Scheduler [{slot}]: no channel configured, skipping")
         return
@@ -68,6 +79,36 @@ async def _send_scheduled_report(slot: str) -> None:
     logger.info(f"Scheduler: {slot} report sent to channel {settings.schedule_report_channel_id}")
 
 
+async def _send_weekend_digest() -> None:
+    if datetime.datetime.now(_TZ).weekday() != 6:  # only Sunday
+        return
+    if not settings.schedule_report_channel_id:
+        logger.warning("Scheduler [weekend_digest]: no channel configured, skipping")
+        return
+
+    channel = _bot.get_channel(int(settings.schedule_report_channel_id))
+    if channel is None:
+        logger.error(
+            f"Scheduler [weekend_digest]: channel {settings.schedule_report_channel_id} not found"
+        )
+        return
+
+    logger.info("Scheduler: running weekend_digest report")
+    try:
+        result = await run_weekend_digest()
+        report = result.get("final_report", "") or "⚠️ 無法生成假日消息摘要，請稍後再試。"
+    except Exception as exc:
+        logger.error(f"Scheduler [weekend_digest] error: {exc}", exc_info=True)
+        report = f"⚠️ 假日消息摘要錯誤：{exc}"
+
+    for chunk in chunk_message(report):
+        await channel.send(chunk)
+
+    logger.info(
+        f"Scheduler: weekend_digest report sent to channel {settings.schedule_report_channel_id}"
+    )
+
+
 @tasks.loop(time=datetime.time(8, 30, tzinfo=_TZ))
 async def pre_market_report():
     await _send_scheduled_report("pre_market")
@@ -81,6 +122,11 @@ async def mid_session_report():
 @tasks.loop(time=datetime.time(14, 30, tzinfo=_TZ))
 async def post_market_report():
     await _send_scheduled_report("post_market")
+
+
+@tasks.loop(time=datetime.time(20, 0, tzinfo=_TZ))
+async def weekend_digest_report():
+    await _send_weekend_digest()
 
 
 def start_scheduled_tasks(bot_instance) -> None:
@@ -97,4 +143,5 @@ def start_scheduled_tasks(bot_instance) -> None:
     pre_market_report.start()
     mid_session_report.start()
     post_market_report.start()
-    logger.info("Scheduled tasks started: 08:30 / 12:00 / 14:30 TST")
+    weekend_digest_report.start()
+    logger.info("Scheduled tasks started: 08:30 / 12:00 / 14:30 TST (平日) + 20:00 週日假日摘要")
