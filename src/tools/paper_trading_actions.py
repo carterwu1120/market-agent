@@ -11,6 +11,7 @@ shared with the /performance command) and src/memory/paper_trading_store.py
 from __future__ import annotations
 
 from src.agents.paper_trading import calc_pnl_pct, evaluate_paper_trades
+from src.config import settings
 from src.memory.paper_trading_store import (
     close_position,
     get_open_positions,
@@ -40,6 +41,21 @@ async def buy(symbol: str, reason: str, horizon: str = "short_term") -> dict:
     existing = [p for p in await get_open_positions() if p["symbol"] == symbol]
     if existing:
         return {"error": f"{symbol} 已經有持有中的部位（id={existing[0]['id']}），不可重複買進"}
+
+    max_positions = (
+        settings.paper_trading_max_short_term_positions
+        if horizon == "short_term"
+        else settings.paper_trading_max_long_term_positions
+    )
+    same_horizon_count = len(await get_open_positions(horizon=horizon))
+    if same_horizon_count >= max_positions:
+        horizon_label = "短線操作" if horizon == "short_term" else "長期持有"
+        return {
+            "error": (
+                f"{horizon_label}部位已達上限（{same_horizon_count}/{max_positions}），"
+                f"須先賣出既有部位才能買進 {symbol}"
+            )
+        }
 
     price_data = await get_stock_price(symbol)
     price = price_data.get("last_price")

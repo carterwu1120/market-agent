@@ -47,6 +47,16 @@ class Settings(BaseSettings):
     # pause until the next trading session; candidate discovery (cheap,
     # non-agentic) keeps running.
     paper_trading_daily_budget_usd: float = 5.0
+    # Concentration limits -- without these, paper_trade_buy has no ceiling
+    # and the agent could keep opening positions indefinitely. Deliberately
+    # set high (not a tight operational cap) -- paper trading risks no real
+    # capital, so this exists to catch runaway/bug-driven buying, not to
+    # second-guess the agent's judgment in a genuinely strong market. Same
+    # "hard rule as a backstop, not the primary constraint" shape as
+    # WATCHLIST_TTL. Tracked separately per horizon (not a combined total)
+    # so short-term churn can't crowd out long-term holds' allotment.
+    paper_trading_max_short_term_positions: int = 20
+    paper_trading_max_long_term_positions: int = 20
 
     # App
     log_level: str = "INFO"

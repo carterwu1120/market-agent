@@ -14,7 +14,7 @@
 - 📈 **技術面分析** — RSI、MACD、MA20/60、EMA12、乖離率、布林帶（yfinance + pandas-ta）；本機 SQLite 快取 30 分鐘，避免重複計算 ✅
 - 📊 **基本面分析** — PE、PB、EPS、ROE、分析師評等（Yahoo Finance）；本機 SQLite 快取 24 小時 ✅
 - 🧩 **籌碼面分析** — 三大法人買賣超（TWSE 公開 API）✅ | 融資融券 ⚠️ API 不穩定
-- 💬 **社群訊號** — PTT Stock 板關鍵字監控（大單、訂單、法說等）
+- 💬 **社群訊號** — CMoney 討論區個股貼文，摘要投資人關注議題與獨家技術亮點
 - 📚 **知識庫** — `data/knowledge_base/` 放個人技術分析筆記，daily_brief 每次直接整篇讀入 prompt 當背景知識，內容量小不需要向量搜尋
 - 💾 **頻道共用對話記憶** — SQLite session 以頻道為單位共享，每則訊息附帶 `[username]` 前綴，LLM 能辨別不同使用者的發言並判斷是否為接話；每輪回覆儲存 `conclusion`、`symbols`、`intent`，支援跨使用者的 follow-up（「那聯發科呢？」即使是不同人問也能繼承話題）
 - 🔍 **ReAct 研究模式** — 複雜/比較型問題（「比較半導體和航運哪個強」「找最值得買的機器人股」）自動進入 ReAct loop，LLM 自主決定呼叫哪些工具、呼叫幾次，直到得出結論；注入對話歷史，支援跨輪比較
@@ -235,7 +235,7 @@ market-agent/
     │   ├── news_fetcher.py      # RSS + NewsAPI
     │   ├── stock_data.py        # yfinance（價格、技術、基本面）
     │   ├── chip_data.py         # TWSE API（三大法人、融資融券）
-    │   ├── social_signal.py     # PTT scraper
+    │   ├── cmoney_forum.py      # CMoney 討論區爬蟲（社群訊號）
     │   ├── sector_data.py       # TWSE ISIN 類股查詢（官方產業分類）
     │   ├── cmoney_concept.py    # CMoney 概念股爬蟲（159 個主題分類）
     │   ├── theme_search.py      # 主題搜尋（CMoney 優先 + 新聞 fallback）
@@ -291,7 +291,7 @@ market-agent/
 | 股票數據 | yfinance, pandas-ta |
 | 台股籌碼 | TWSE 公開 API, goodinfo scraper |
 | 新聞 | feedparser (RSS), NewsAPI |
-| 社群訊號 | httpx + BeautifulSoup (PTT) |
+| 社群訊號 | httpx + BeautifulSoup (CMoney 討論區) |
 | 開放搜尋／官方揭露 | DuckDuckGo + TWSE MOPS OpenAPI |
 | 對話記憶／快取／股票快照／知識庫 | SQLite（本機單一檔案） |
 | Bot | discord.py 2.4+ |

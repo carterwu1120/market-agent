@@ -125,7 +125,7 @@ SYNTHESIS_PROMPT = """以下是從各數據源收集到的最新資訊。數字�
   （無對應資料就不寫這項，不可自行猜測有沒有關聯）
 
 ## 社群輿情與獨家技術亮點
-整合 PTT 與 CMoney 觀點，提煉投資人關注的核心議題
+整合 CMoney 觀點，提煉投資人關注的核心議題
 
 ## 投資建議
 需標注風險等級（低/中/中高/高），建議操作方向
@@ -314,20 +314,11 @@ def _summarize_us_sector_proxies(data: dict) -> str:
 def _summarize_social(data: list[dict]) -> str:
     if not data:
         return "無社群訊號"
-    ptt = [p for p in data if p.get("source") != "CMoney討論區"]
-    cmoney = [p for p in data if p.get("source") == "CMoney討論區"]
-    lines = []
-    if ptt:
-        lines.append("【PTT Stock 板】")
-        for p in ptt[:5]:
-            kws = ", ".join(p.get("keywords", []))
-            lines.append(f"- {p.get('title', '')} | 關鍵詞: {kws} | {p.get('url', '')}")
-    if cmoney:
-        lines.append("【CMoney 討論區 — 投資人觀點/獨家技術】")
-        for p in cmoney[:8]:
-            content = p.get("content", "")
-            lines.append(f"- [{','.join(p.get('tickers', []))}] {p.get('title', '')}" +
-                         (f"\n  摘要: {content}" if content else ""))
+    lines = ["【CMoney 討論區 — 投資人觀點/獨家技術】"]
+    for p in data[:8]:
+        content = p.get("content", "")
+        lines.append(f"- [{','.join(p.get('tickers', []))}] {p.get('title', '')}" +
+                     (f"\n  摘要: {content}" if content else ""))
     return "\n".join(lines)
 
 

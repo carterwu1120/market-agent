@@ -29,7 +29,6 @@ from src.tools.mops_data import (
     get_material_info_batch,
 )
 from src.tools.news_fetcher import fetch_all_news
-from src.tools.social_signal import fetch_ptt_stock, filter_signal_posts
 from src.tools.stock_data import (
     get_fundamental_data,
     get_market_indices,
@@ -122,28 +121,13 @@ async def _chip(symbols: list[str]) -> tuple[list[dict], list[str]]:
 
 
 async def _social(symbols: list[str]) -> tuple[list[dict], list[str]]:
-    ptt_task = asyncio.create_task(fetch_ptt_stock(max_pages=2))
     cmoney_tasks = (
         [asyncio.create_task(get_forum_posts(sym, max_posts=8)) for sym in symbols[:3]] if symbols else []
     )
-
-    ptt_posts_raw = await ptt_task
     cmoney_results = await asyncio.gather(*cmoney_tasks, return_exceptions=True)
 
-    signal_posts = filter_signal_posts(ptt_posts_raw, min_keywords=1)
-    if symbols:
-        codes = [s.replace(".TW", "") for s in symbols]
-        filtered = [
-            p for p in signal_posts
-            if any(code in p.title + p.content for code in codes) or any(s in p.tickers for s in symbols)
-        ]
-        if not filtered:
-            filtered = signal_posts[:10]
-    else:
-        filtered = signal_posts[:15]
-
-    post_dicts = [asdict(p) for p in filtered]
-    sources = list({p.url for p in filtered if p.url})
+    post_dicts: list[dict] = []
+    sources: list[str] = []
 
     for result in cmoney_results:
         if isinstance(result, Exception) or not isinstance(result, dict):

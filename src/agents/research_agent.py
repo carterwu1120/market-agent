@@ -57,7 +57,8 @@ REACT_SYSTEM = f"""你是一個台股研究分析師兼個人助理，可以使�
 - paper_trade_buy(symbol, reason, horizon): 買進，價格一律用系統即時股價，不接受自行指定。
   horizon 必須明確判斷並指定：short_term（短線操作，之後每輪都會被緊盯、由你自己決定出場
   時機）或 long_term（長期持有，之後只會用較低頻率的資訊追蹤，不會每輪都問你要不要出場）。
-  買進後會自動從觀察名單移除。
+  買進後會自動從觀察名單移除。短線與長期部位各自有同時持有檔數上限，達上限時會回傳
+  錯誤訊息，須先賣出既有部位才能再買進，不要重複嘗試。
 - paper_trade_sell(symbol, reason, exit_reason): 賣出，exit_reason 只能是
   take_profit（停利）、stop_loss（停損）、llm_signal（其他判斷）三選一
 - watchlist_drop(symbol, reason): 把一支股票從觀察名單移除，代表你判斷不用再追蹤了
