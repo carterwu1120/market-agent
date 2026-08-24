@@ -36,6 +36,7 @@ ALL_TOOL_NAMES = [
     "chip_analysis", "company_news", "stock_history",
     "web_search", "company_announcements", "company_financial_summary",
     "discord_message", "discord_dm", "gmail_draft", "gmail_send",
+    "paper_trade_status", "paper_trade_buy", "paper_trade_sell",
 ]
 
 

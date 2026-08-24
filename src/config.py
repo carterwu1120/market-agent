@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     gmail_credentials_file: str = "gmail_credentials.json"
     gmail_token_file: str = "gmail_token.json"
 
+    # Paper trading loop (experimental) — runs as a background task inside
+    # the same process as the Discord bot, not a separate program
+    paper_trading_enabled: bool = False
+
     # App
     log_level: str = "INFO"
     market: Literal["TW", "US", "HK"] = "TW"

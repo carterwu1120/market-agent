@@ -57,6 +57,15 @@ class MarketAgentBot(commands.Bot):
         from src.bot.scheduler import start_scheduled_tasks
         start_scheduled_tasks(self)
 
+        if settings.paper_trading_enabled:
+            import asyncio
+
+            from src.agents.paper_trading_loop import run as run_paper_trading
+            asyncio.create_task(run_paper_trading())
+            logger.info("Paper trading loop started as background task")
+        else:
+            logger.info("Paper trading loop disabled (PAPER_TRADING_ENABLED=false)")
+
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} (id: {self.user.id})")
         await self.change_presence(activity=discord.Activity(
@@ -160,6 +169,44 @@ async def cmd_clear(interaction: discord.Interaction):
     await interaction.response.send_message("✅ 對話記憶已清除", ephemeral=True)
 
 
+@bot.tree.command(name="performance", description="查看 agent 過去建議的紙上交易績效")
+async def cmd_performance(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+    from src.agents.paper_trading import evaluate_paper_trades
+
+    result = await evaluate_paper_trades()
+    if not result["positions"]:
+        await interaction.followup.send("目前還沒有任何紙上交易記錄。")
+        return
+
+    lines = [
+        f"**紙上交易績效**（持有中 {result['open_count']} 筆，已平倉 {result['closed_count']} 筆）",
+        (
+            f"勝率（已平倉）：{result['win_rate']}%"
+            if result["win_rate"] is not None
+            else "勝率：資料不足"
+        ),
+        (
+            f"平均報酬（已平倉）：{result['avg_return_pct']}%"
+            if result["avg_return_pct"] is not None
+            else "平均報酬：資料不足"
+        ),
+        "",
+    ]
+    for p in result["positions"][-15:]:
+        pnl = f"{p['pnl_pct']:+.2f}%" if p["pnl_pct"] is not None else "N/A"
+        if p["status"] == "open":
+            lines.append(
+                f"- {p['symbol']} 持有中（{p['entry_date']} 進場 {p['entry_price']}）→ 浮動 {pnl}"
+            )
+        else:
+            lines.append(
+                f"- {p['symbol']} 已平倉（{p['entry_date']} 進場 {p['entry_price']} → "
+                f"{p['exit_date']} 出場 {p['exit_price']}，{p['exit_reason']}）→ 實現 {pnl}"
+            )
+    await interaction.followup.send("\n".join(lines))
+
+
 @bot.tree.command(name="help", description="顯示使用說明")
 async def cmd_help(interaction: discord.Interaction):
     help_text = (
@@ -168,6 +215,7 @@ async def cmd_help(interaction: discord.Interaction):
         "/brief          — 今日市場摘要，含新聞、技術面、籌碼面\n"
         "/stock <codes>  — 分析指定股票，例如: /stock 2330 2454\n"
         "/clear          — 清除對話記憶，開始新的對話\n"
+        "/performance    — 查看 agent 過去建議的紙上交易績效\n"
         "/help           — 顯示此說明\n"
         "```\n"
         "💡 也可以直接輸入問題，例如：\n"

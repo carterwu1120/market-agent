@@ -80,6 +80,29 @@ CREATE TABLE IF NOT EXISTS stock_daily_fundamental (
     fetched_at TEXT NOT NULL,
     PRIMARY KEY (symbol, date)
 );
+
+-- Paper-trading tracker (src/agents/paper_trading_loop.py): a real open ->
+-- closed position lifecycle, not a one-shot recommendation. entry_price/
+-- exit_price always come from real fetched prices, never an LLM-stated
+-- number, same principle as every other table here. No real or
+-- third-party trading account involved -- see docs/adr for why (CMoney's
+-- virtual-trading login migrated to OIDC and the only unofficial client
+-- library for it is dead).
+CREATE TABLE IF NOT EXISTS paper_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    status TEXT NOT NULL,              -- open | closed
+    entry_price REAL NOT NULL,
+    entry_date TEXT NOT NULL,
+    entry_reason TEXT NOT NULL DEFAULT '',
+    exit_price REAL,
+    exit_date TEXT,
+    exit_reason TEXT NOT NULL DEFAULT '',   -- take_profit | stop_loss | llm_signal
+    created_at REAL NOT NULL,
+    closed_at REAL
+);
+
+CREATE INDEX IF NOT EXISTS ix_paper_positions_symbol_status ON paper_positions (symbol, status);
 """
 
 

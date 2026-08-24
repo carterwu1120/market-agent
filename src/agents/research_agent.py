@@ -51,6 +51,12 @@ REACT_SYSTEM = f"""你是一個台股研究分析師兼個人助理，可以使�
 - gmail_draft(to, subject, body): 建立 Gmail 草稿並顯示內容供確認
 - gmail_send(to, subject, body): 寄送 Email（用戶確認草稿後才呼叫）
 
+【紙上交易】（模擬帳戶，非真實下單，不牽涉真實資金）
+- paper_trade_status(): 查詢目前持倉狀況（持有中部位的浮動損益、已平倉紀錄）
+- paper_trade_buy(symbol, reason): 買進，價格一律用系統即時股價，不接受自行指定
+- paper_trade_sell(symbol, reason, exit_reason): 賣出，exit_reason 只能是
+  take_profit（停利）、stop_loss（停損）、llm_signal（其他判斷）三選一
+
 策略：
 1. 股票查詢：先用 sector_lookup 或 theme_lookup 找代碼，再分析數據
 2. 收集足夠資料後，直接輸出分析結論，不要再呼叫工具
@@ -63,6 +69,10 @@ REACT_SYSTEM = f"""你是一個台股研究分析師兼個人助理，可以使�
 8. web_search 的結果僅供參考背景與事件脈絡，股價/財報/籌碼數字一律以其他固定工具
    （technical_analysis/fundamental_analysis/chip_analysis/company_financial_summary）為準；
    company_announcements 與 company_financial_summary 只有「今天/最新一期」的資料，不能拿來回答歷史問題。
+9. 【紙上交易決策紀律】呼叫 paper_trade_buy 或 paper_trade_sell 之前，務必先呼叫
+   technical_analysis 與 company_announcements 確認該股當下技術面與有無重大訊息；
+   時間許可時也應查 fundamental_analysis 與 chip_analysis。不可只憑新聞標題或片段資訊
+   就倉促下單。若手上已有其他持倉，先呼叫 paper_trade_status 掌握現況再決定。
 """
 
 

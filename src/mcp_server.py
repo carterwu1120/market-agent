@@ -276,6 +276,94 @@ async def gmail_send(to: str, subject: str, body: str) -> str:
     return f"Email 已寄出至 {to}（message_id: {result.get('message_id')}）"
 
 
+# ── 紙上交易（模擬帳戶，非真實下單）───────────────────────────────────────
+# 進出場價格一律由這裡即時查真實股價，不接受 LLM 自行指定價格數字。
+
+@mcp.tool()
+async def paper_trade_status() -> str:
+    """查詢目前紙上交易的持倉狀況：有哪些部位持有中（含浮動損益）、最近平倉的紀錄。"""
+    from src.agents.paper_trading import evaluate_paper_trades
+
+    result = await evaluate_paper_trades()
+    if not result["positions"]:
+        return "目前沒有任何紙上交易部位"
+    lines = []
+    for p in result["positions"]:
+        if p["status"] == "open":
+            lines.append(
+                f"{p['symbol']}：持有中，進場 {p['entry_price']}（{p['entry_date']}），"
+                f"浮動損益 {p['pnl_pct']}%"
+            )
+        else:
+            lines.append(
+                f"{p['symbol']}：已平倉，進場 {p['entry_price']} → 出場 {p['exit_price']}"
+                f"（{p['exit_reason']}），實現損益 {p['pnl_pct']}%"
+            )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def paper_trade_buy(symbol: str, reason: str) -> str:
+    """對指定股票開一筆紙上交易買進部位（模擬，非真實下單）。
+    symbol 格式：2330.TW。reason：買進理由，會被記錄下來。
+    價格一律用系統即時查到的真實股價，不接受自行指定價格。
+    同一支股票若已有持有中部位，不可重複買進，請先用 paper_trade_status 確認。"""
+    from src.memory.paper_trading_store import get_open_positions, open_position
+    from src.tools.stock_data import get_stock_price
+
+    existing = [p for p in await get_open_positions() if p["symbol"] == symbol]
+    if existing:
+        return f"{symbol} 已經有持有中的部位（id={existing[0]['id']}），不可重複買進"
+
+    price_data = await get_stock_price(symbol)
+    price = price_data.get("last_price")
+    if price_data.get("error") or not price:
+        return f"{symbol} 無法取得即時股價，交易取消：{price_data.get('error', '無資料')}"
+
+    position_id = await open_position(symbol, price, reason)
+    _fire_and_forget(_notify_trade(f"📈 紙上交易買進：{symbol} @ {price}\n理由：{reason}"))
+    return f"已買進 {symbol} @ {price}（id={position_id}）"
+
+
+@mcp.tool()
+async def paper_trade_sell(symbol: str, reason: str, exit_reason: str = "llm_signal") -> str:
+    """對指定股票持有中的部位平倉（模擬，非真實下單）。
+    exit_reason 只能是 take_profit（停利）、stop_loss（停損）、llm_signal（其他判斷）三選一。
+    價格一律用系統即時查到的真實股價，不接受自行指定價格。"""
+    from src.agents.paper_trading import calc_pnl_pct
+    from src.memory.paper_trading_store import close_position, get_open_positions
+    from src.tools.stock_data import get_stock_price
+
+    existing = [p for p in await get_open_positions() if p["symbol"] == symbol]
+    if not existing:
+        return f"{symbol} 目前沒有持有中的部位可以賣出"
+    if exit_reason not in ("take_profit", "stop_loss", "llm_signal"):
+        exit_reason = "llm_signal"
+
+    price_data = await get_stock_price(symbol)
+    price = price_data.get("last_price")
+    if price_data.get("error") or not price:
+        return f"{symbol} 無法取得即時股價，交易取消：{price_data.get('error', '無資料')}"
+
+    position = existing[0]
+    await close_position(position["id"], price, exit_reason)
+    pnl = calc_pnl_pct("buy", position["entry_price"], price)
+    _fire_and_forget(_notify_trade(
+        f"📉 紙上交易賣出：{symbol} @ {price}（{exit_reason}，損益 {pnl}%）\n理由：{reason}"
+    ))
+    return f"已賣出 {symbol} @ {price}（{exit_reason}，損益 {pnl}%）"
+
+
+async def _notify_trade(message: str) -> None:
+    from src.config import settings
+
+    if not settings.schedule_report_channel_id:
+        return
+    result = await send_channel_message(settings.schedule_report_channel_id, message)
+    if result.get("error"):
+        logger.warning(f"mcp_server: trade notify failed: {result['error']}")
+
+
 def _init_storage_before_serving() -> None:
     """This subprocess is spawned fresh per react call and races
     discord_bot.py's own startup init_storage() — without this, a background
