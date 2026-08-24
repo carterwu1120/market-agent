@@ -16,7 +16,7 @@ import re
 from loguru import logger
 
 from src.agents.report_utils import extract_conclusion
-from src.llm_claude_code import claude_code_research
+from src.llm_claude_code import USER_FACING_TOOL_NAMES, claude_code_research
 from src.tools.news_fetcher import _TICKER_NAMES
 
 # Deterministic company-name -> ticker hints for react's system prompt.
@@ -79,8 +79,16 @@ REACT_SYSTEM = f"""你是一個台股研究分析師兼個人助理，可以使�
 _SYMBOL_RE = re.compile(r"\b\d{4}\.TW\b")
 
 
-async def run_research(user_message: str, conversation_history: list[dict]) -> dict:
-    """ReAct loop：Claude Code 自主決定呼叫哪些 MCP 工具直到得出結論。"""
+async def run_research(
+    user_message: str,
+    conversation_history: list[dict],
+    tool_names: list[str] = USER_FACING_TOOL_NAMES,
+) -> dict:
+    """ReAct loop：Claude Code 自主決定呼叫哪些 MCP 工具直到得出結論。
+
+    tool_names 預設不含紙上交易工具——一般使用者觸發的問答不該有能力下單。
+    只有 paper_trading_loop.py 會明確傳入包含交易工具的完整清單。
+    """
     logger.info("ResearchAgent: starting ReAct loop (claude_code MCP backend)")
 
     history = []
@@ -94,7 +102,7 @@ async def run_research(user_message: str, conversation_history: list[dict]) -> d
             content = f"[分析標的: {', '.join(symbols)}]\n{content}"
         history.append({"role": m["role"], "content": content})
 
-    text = await claude_code_research(REACT_SYSTEM, history, user_message)
+    text = await claude_code_research(REACT_SYSTEM, history, user_message, tool_names=tool_names)
     report, conclusion = extract_conclusion(text)
     used_symbols = list(dict.fromkeys(_SYMBOL_RE.findall(report)))
     logger.info(f"ResearchAgent: done, symbols={used_symbols}")

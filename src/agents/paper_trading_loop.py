@@ -40,6 +40,7 @@ from loguru import logger
 from src.agents.daily_brief import _fetch_news
 from src.agents.market_agent import _extract_hot_stocks
 from src.agents.research_agent import run_research
+from src.llm_claude_code import ALL_TOOL_NAMES
 from src.memory.paper_trading_store import get_open_positions
 from src.memory.store import init_storage
 
@@ -134,7 +135,9 @@ async def _tight_scan() -> None:
     )
 
     try:
-        result = await run_research(prompt, [])
+        # Only this call site opts into the full tool set (incl. paper_trade_*)
+        # -- see llm_claude_code.py's USER_FACING_TOOL_NAMES/ALL_TOOL_NAMES split.
+        result = await run_research(prompt, [], tool_names=ALL_TOOL_NAMES)
         logger.info(f"paper_trading_loop: cycle conclusion — {result.get('conclusion', '')}")
     except Exception as exc:
         logger.warning(f"paper_trading_loop: research call failed: {exc}")

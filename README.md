@@ -20,6 +20,7 @@
 - 🔍 **ReAct 研究模式** — 複雜/比較型問題（「比較半導體和航運哪個強」「找最值得買的機器人股」）自動進入 ReAct loop，LLM 自主決定呼叫哪些工具、呼叫幾次，直到得出結論；注入對話歷史，支援跨輪比較
 - 📣 **法說會與技術新聞** — 鉅亨網個股搜尋，優先抓法說會、技術突破、產品相關報導，作為「獨家技術亮點」段落的唯一來源
 - ⏰ **定時排程報告** — 每日自動在 08:30（盤前）、12:00（盤中）、14:30（收盤後）發送市場報告至指定 Discord 頻道；設定 `SCHEDULE_REPORT_CHANNEL_ID` 即可啟用，無需手動觸發
+- 🧪 **紙上交易迴圈**（實驗性）— 交易時間內背景自動運作，抓新聞找候選股、交給 react agent 自主查證後判斷買賣，用真實股價記錄進/出場，`/performance` 隨時查績效；`PAPER_TRADING_ENABLED` 開關控制要不要啟動，不影響核心功能，詳見 [`docs/paper_trading.md`](docs/paper_trading.md)
 - 🤖 **LLM 後端** — **Claude Code CLI**（`claude -p`，不需 API key，算在 Claude Code 訂閱額度內）
 
 ---
@@ -44,7 +45,7 @@ flowchart TD
     CLS -->|daily_brief| DB
 
     subgraph RA["run_research()（Claude Code 原生 ReAct）"]
-        LLM_R["Claude Code 自主決定\n呼叫哪些 MCP 工具"] -->|tool_calls| MCP["src/mcp_server.py\n11 種工具"]
+        LLM_R["Claude Code 自主決定\n呼叫哪些 MCP 工具"] -->|tool_calls| MCP["src/mcp_server.py\n17 種工具（含紙上交易）"]
         MCP -->|工具結果| LLM_R
     end
 
@@ -90,8 +91,11 @@ flowchart TD
 | `web_search(query, max_results)` | `web_search.search_web()`（自己下關鍵字，僅供參考背景） |
 | `company_announcements(symbol)` | `mops_data.get_material_info()`（TWSE MOPS，只有今天） |
 | `company_financial_summary(symbol)` | `mops_data.get_financial_summary()`（TWSE MOPS，只有最新一季） |
+| `paper_trade_status()` | 查詢紙上交易目前持倉與損益 |
+| `paper_trade_buy(symbol, reason)` | 開一筆紙上交易買進部位，價格用即時真實股價 |
+| `paper_trade_sell(symbol, reason, exit_reason)` | 對持有部位平倉，價格用即時真實股價 |
 
-> 完整清單（含 Discord/Gmail 訊息工具）見 [`src/mcp_server.py`](src/mcp_server.py)。
+> 完整清單（含 Discord/Gmail 訊息工具，共 17 個）見 [`src/mcp_server.py`](src/mcp_server.py)。紙上交易的完整運作方式（背景迴圈、廣掃/緊盯頻率、架構圖）見 [`docs/paper_trading.md`](docs/paper_trading.md)。
 
 ---
 
@@ -131,6 +135,7 @@ uv run python -m src.main
 |------|------|
 | `/brief` | 今日市場摘要與投資建議 |
 | `/stock 2330 2454` | 分析指定股票 |
+| `/performance` | 查看紙上交易迴圈的持倉與損益（見 [`docs/paper_trading.md`](docs/paper_trading.md)）|
 | `/clear` | 清除對話記憶 |
 | `/help` | 顯示說明 |
 | 群組頻道：@bot 問話 | 自由對話模式（支援跨使用者 follow-up）|
@@ -156,6 +161,14 @@ SCHEDULE_ENABLED=true                    # 預設已開啟
 | 08:30 | 盤前報告：昨收、隔夜美股、三大法人、今日開盤重點 |
 | 12:00 | 盤中報告：目前指數與成交量、盤勢強弱、下午方向 |
 | 14:30 | 收盤報告：今日漲跌幅、三大法人明細、明日操作建議 |
+
+#### 啟用紙上交易迴圈（實驗性）
+
+```env
+PAPER_TRADING_ENABLED=true
+```
+
+啟動後在交易時間內（週一~五 09:00-13:30）自動背景運作，用 `/performance` 查看目前持倉與績效。不需要額外的帳號或憑證——完整運作方式見 [`docs/paper_trading.md`](docs/paper_trading.md)。
 
 ---
 
@@ -189,7 +202,7 @@ uv run python -m src.cli
 | 用途 | 函數 | 機制 | 使用位置 |
 |------|------|------|---------|
 | 單次分類/擷取/報告生成（無工具） | `claude_code_chat()` | `claude -p --tools ""`，純文字 in/out | pipeline（intent 分類）、market_agent（熱門股擷取）、synthesizer（報告生成）|
-| 需要即時查資料的 ReAct 迴圈 | `claude_code_research()` | `claude -p --mcp-config`，Claude Code 用原生 MCP tool-calling 呼叫 [`src/mcp_server.py`](src/mcp_server.py) 暴露的 14 個工具 | research_agent |
+| 需要即時查資料的 ReAct 迴圈 | `claude_code_research()` | `claude -p --mcp-config`，Claude Code 用原生 MCP tool-calling 呼叫 [`src/mcp_server.py`](src/mcp_server.py) 暴露的 17 個工具 | research_agent、paper_trading_loop |
 
 > **為什麼分兩種**：早期曾嘗試用純文字 prompt 要求 `claude -p` 輸出 `{"action": "...", "args": {...}}` 這種自訂 JSON 協議來模擬 tool-calling，實測約 30–40% 時候會失敗——`claude -p` 背後是完整的 agent runtime，不是單純的文字補全 API，遇到「不確定工具是否真的存在」的情境會自行幻想/扮演整個工具呼叫與回傳結果。改用真正的 MCP tool-calling 後，這個失敗模式完全消失（測試中連續 10/10 次正確執行，含多工具串接）。單次分類這類「不需要工具」的呼叫則沒有這個問題，維持純文字 `claude -p` 即可穩定運作。
 
@@ -208,13 +221,15 @@ market-agent/
     ├── main.py                  # 啟動入口
     ├── config.py                # 所有設定（pydantic-settings）
     ├── llm_claude_code.py       # Claude Code CLI 後端（claude_code_chat / claude_code_research）
-    ├── mcp_server.py            # MCP server：暴露 14 個工具給 claude -p --mcp-config 呼叫
+    ├── mcp_server.py            # MCP server：暴露 17 個工具給 claude -p --mcp-config 呼叫
     ├── agents/
     │   ├── pipeline.py          # ★ intent 分類 + run_agent() 對外入口
     │   ├── daily_brief.py       # daily_brief 固定平行抓取流程
     │   ├── research_agent.py    # react 的 ReAct 迴圈（交給 Claude Code）
     │   ├── market_agent.py      # 熱門股萃取輔助函數
-    │   └── synthesizer.py       # write_report()：整合資料 + 生成報告
+    │   ├── synthesizer.py       # write_report()：整合資料 + 生成報告
+    │   ├── paper_trading_loop.py # 紙上交易背景迴圈（見 docs/paper_trading.md）
+    │   └── paper_trading.py     # 損益計算 + evaluate_paper_trades()
     ├── tools/                   # 各數據源工具函數
     │   ├── news_fetcher.py      # RSS + NewsAPI
     │   ├── stock_data.py        # yfinance（價格、技術、基本面）
@@ -230,7 +245,8 @@ market-agent/
     │   ├── store.py             # SQLite schema + connection helper
     │   ├── cache_store.py       # 通用 TTL 快取（新聞/股票 API）
     │   ├── session_store.py     # 頻道對話 session（SQLite）
-    │   └── stock_store.py       # 每日股票快照 upsert + 歷史查詢
+    │   ├── stock_store.py       # 每日股票快照 upsert + 歷史查詢
+    │   └── paper_trading_store.py # 紙上交易部位（開倉/平倉）
     └── bot/
         └── discord_bot.py       # Discord slash commands + 訊息處理
 ```

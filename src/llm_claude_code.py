@@ -31,13 +31,21 @@ DEFAULT_TIMEOUT_SECONDS = 180
 MCP_SERVER_NAME = "market-agent-tools"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+# Trading tools are kept out of the default (user-facing) tool set --
+# a /stock question or free-text chat has no business being able to place
+# a trade just because the LLM decided to. Only paper_trading_loop.py
+# explicitly opts into ALL_TOOL_NAMES for its own automated decisions.
+_PAPER_TRADE_TOOL_NAMES = ["paper_trade_status", "paper_trade_buy", "paper_trade_sell"]
+
 ALL_TOOL_NAMES = [
     "sector_lookup", "theme_lookup", "technical_analysis", "fundamental_analysis",
     "chip_analysis", "company_news", "stock_history",
     "web_search", "company_announcements", "company_financial_summary",
     "discord_message", "discord_dm", "gmail_draft", "gmail_send",
-    "paper_trade_status", "paper_trade_buy", "paper_trade_sell",
+    *_PAPER_TRADE_TOOL_NAMES,
 ]
+
+USER_FACING_TOOL_NAMES = [t for t in ALL_TOOL_NAMES if t not in _PAPER_TRADE_TOOL_NAMES]
 
 
 class ClaudeCodeError(RuntimeError):
@@ -186,7 +194,7 @@ async def claude_code_research(
     system: str,
     history: list[dict],
     user_message: str,
-    tool_names: list[str] = ALL_TOOL_NAMES,
+    tool_names: list[str] = USER_FACING_TOOL_NAMES,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> str:
     """Run one Claude Code agentic turn with MCP tools bound.
