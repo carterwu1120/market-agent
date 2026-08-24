@@ -17,6 +17,7 @@ from loguru import logger
 
 from src.agents.report_utils import extract_conclusion
 from src.llm_claude_code import USER_FACING_TOOL_NAMES, claude_code_research
+from src.tools.knowledge_base import read_knowledge_base
 from src.tools.news_fetcher import _TICKER_NAMES
 
 # Deterministic company-name -> ticker hints for react's system prompt.
@@ -110,7 +111,15 @@ async def run_research(
             content = f"[分析標的: {', '.join(symbols)}]\n{content}"
         history.append({"role": m["role"], "content": content})
 
-    payload = await claude_code_research(REACT_SYSTEM, history, user_message, tool_names=tool_names)
+    system = REACT_SYSTEM
+    kb_context = read_knowledge_base()
+    if kb_context:
+        system += (
+            "\n\n【個人策略筆記】（使用者提供的知識庫，判斷/決策時應納入考量，"
+            "與工具查到的即時數據互相對照，不可取代即時數據）\n" + kb_context
+        )
+
+    payload = await claude_code_research(system, history, user_message, tool_names=tool_names)
     report, conclusion = extract_conclusion(payload["result"])
     used_symbols = list(dict.fromkeys(_SYMBOL_RE.findall(report)))
     logger.info(f"ResearchAgent: done, symbols={used_symbols}, cost=${payload['cost_usd']:.4f}")

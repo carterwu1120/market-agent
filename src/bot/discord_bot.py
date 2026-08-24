@@ -195,15 +195,39 @@ async def cmd_performance(interaction: discord.Interaction):
     ]
     for p in result["positions"][-15:]:
         pnl = f"{p['pnl_pct']:+.2f}%" if p["pnl_pct"] is not None else "N/A"
+        horizon_label = "長期" if p.get("horizon") == "long_term" else "短線"
         if p["status"] == "open":
             lines.append(
-                f"- {p['symbol']} 持有中（{p['entry_date']} 進場 {p['entry_price']}）→ 浮動 {pnl}"
+                f"- {p['symbol']}（{horizon_label}）持有中（{p['entry_date']} 進場 "
+                f"{p['entry_price']}）→ 浮動 {pnl}"
             )
         else:
             lines.append(
-                f"- {p['symbol']} 已平倉（{p['entry_date']} 進場 {p['entry_price']} → "
-                f"{p['exit_date']} 出場 {p['exit_price']}，{p['exit_reason']}）→ 實現 {pnl}"
+                f"- {p['symbol']}（{horizon_label}）已平倉（{p['entry_date']} 進場 "
+                f"{p['entry_price']} → {p['exit_date']} 出場 {p['exit_price']}，"
+                f"{p['exit_reason']}）→ 實現 {pnl}"
             )
+    await interaction.followup.send("\n".join(lines))
+
+
+@bot.tree.command(name="watchlist", description="查看紙上交易目前的觀察名單")
+async def cmd_watchlist(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+    from datetime import datetime, timedelta, timezone
+
+    from src.memory.paper_trading_store import get_watchlist
+
+    watchlist = await get_watchlist()
+    if not watchlist:
+        await interaction.followup.send("目前觀察名單是空的。")
+        return
+
+    tw_tz = timezone(timedelta(hours=8))
+    lines = [f"**觀察名單**（共 {len(watchlist)} 檔，尚未買進）"]
+    for w in watchlist:
+        first_seen = datetime.fromtimestamp(w["first_seen"], tz=tw_tz).strftime("%m/%d %H:%M")
+        checked = "尚未緊盯過" if w["last_checked"] == 0 else "已被緊盯過"
+        lines.append(f"- {w['symbol']}（{first_seen} 加入，{checked}）")
     await interaction.followup.send("\n".join(lines))
 
 
@@ -216,6 +240,7 @@ async def cmd_help(interaction: discord.Interaction):
         "/stock <codes>  — 分析指定股票，例如: /stock 2330 2454\n"
         "/clear          — 清除對話記憶，開始新的對話\n"
         "/performance    — 查看 agent 過去建議的紙上交易績效\n"
+        "/watchlist      — 查看紙上交易目前的觀察名單\n"
         "/help           — 顯示此說明\n"
         "```\n"
         "💡 也可以直接輸入問題，例如：\n"
