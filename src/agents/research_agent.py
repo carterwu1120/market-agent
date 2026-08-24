@@ -113,6 +113,14 @@ async def run_research(
         history.append({"role": m["role"], "content": content})
 
     system = REACT_SYSTEM
+    # Injected unconditionally (not gated by tool_names) -- these notes are
+    # the user's own judgment criteria, not optional flavor text. Scoping
+    # this to only trading calls was tried and reverted: it risks the agent
+    # silently missing the user's own strategy on a plain /stock judgment
+    # question ("該不該買？"), which defeats the entire point of having
+    # this file. The token cost (~3-4K) is accepted as the price of that
+    # guarantee, same reasoning as why daily_brief/paper_trading_loop don't
+    # let the LLM opt out of other required data sources.
     kb_context = read_knowledge_base()
     if kb_context:
         system += (
