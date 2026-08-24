@@ -35,7 +35,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # a /stock question or free-text chat has no business being able to place
 # a trade just because the LLM decided to. Only paper_trading_loop.py
 # explicitly opts into ALL_TOOL_NAMES for its own automated decisions.
-_PAPER_TRADE_TOOL_NAMES = ["paper_trade_status", "paper_trade_buy", "paper_trade_sell"]
+_PAPER_TRADE_TOOL_NAMES = [
+    "paper_trade_status", "paper_trade_buy", "paper_trade_sell", "watchlist_drop",
+]
 
 ALL_TOOL_NAMES = [
     "sector_lookup", "theme_lookup", "technical_analysis", "fundamental_analysis",

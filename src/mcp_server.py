@@ -283,32 +283,36 @@ async def gmail_send(to: str, subject: str, body: str) -> str:
 
 @mcp.tool()
 async def paper_trade_status() -> str:
-    """查詢目前紙上交易的持倉狀況：有哪些部位持有中（含浮動損益）、最近平倉的紀錄。"""
+    """查詢目前紙上交易的持倉狀況：有哪些部位持有中（含浮動損益、短線/長期分類）、最近平倉的紀錄。"""
     result = await paper_trading_actions.get_status()
     if not result["positions"]:
         return "目前沒有任何紙上交易部位"
     lines = []
     for p in result["positions"]:
+        horizon_label = "長期持有" if p.get("horizon") == "long_term" else "短線操作"
         if p["status"] == "open":
             lines.append(
-                f"{p['symbol']}：持有中，進場 {p['entry_price']}（{p['entry_date']}），"
-                f"浮動損益 {p['pnl_pct']}%"
+                f"{p['symbol']}：持有中（{horizon_label}），進場 {p['entry_price']}"
+                f"（{p['entry_date']}），浮動損益 {p['pnl_pct']}%"
             )
         else:
             lines.append(
-                f"{p['symbol']}：已平倉，進場 {p['entry_price']} → 出場 {p['exit_price']}"
-                f"（{p['exit_reason']}），實現損益 {p['pnl_pct']}%"
+                f"{p['symbol']}：已平倉（{horizon_label}），進場 {p['entry_price']} → 出場 "
+                f"{p['exit_price']}（{p['exit_reason']}），實現損益 {p['pnl_pct']}%"
             )
     return "\n".join(lines)
 
 
 @mcp.tool()
-async def paper_trade_buy(symbol: str, reason: str) -> str:
+async def paper_trade_buy(symbol: str, reason: str, horizon: str = "short_term") -> str:
     """對指定股票開一筆紙上交易買進部位（模擬，非真實下單）。
     symbol 格式：2330.TW。reason：買進理由，會被記錄下來。
+    horizon 只能是 short_term（短線，會持續被緊盯、需要你自己判斷出場時機）或
+    long_term（長期持有，之後只會用較低頻率的資訊追蹤，不會每次緊盯都問你）。
     價格一律用系統即時查到的真實股價，不接受自行指定價格。
-    同一支股票若已有持有中部位，不可重複買進，請先用 paper_trade_status 確認。"""
-    result = await paper_trading_actions.buy(symbol, reason)
+    同一支股票若已有持有中部位，不可重複買進，請先用 paper_trade_status 確認。
+    買進後會自動從觀察名單移除，不需要另外呼叫 watchlist_drop。"""
+    result = await paper_trading_actions.buy(symbol, reason, horizon)
     if result.get("error"):
         return result["error"]
     return f"已買進 {result['symbol']} @ {result['price']}（id={result['position_id']}）"
@@ -326,6 +330,18 @@ async def paper_trade_sell(symbol: str, reason: str, exit_reason: str = "llm_sig
         f"已賣出 {result['symbol']} @ {result['price']}"
         f"（{result['exit_reason']}，損益 {result['pnl_pct']}%）"
     )
+
+
+@mcp.tool()
+async def watchlist_drop(symbol: str, reason: str) -> str:
+    """把指定股票從觀察名單移除，代表你判斷這支不用再繼續追蹤了
+    （不論是決定不交易它，還是已經透過 paper_trade_buy 處理完畢）。
+    這是移除觀察名單的主要方式；系統另外有一個很長的機械式過期時間作為保險，
+    但正常情況下應該由你主動呼叫這個工具來管理名單，而不是等它自動過期。"""
+    result = await paper_trading_actions.drop_watchlist(symbol, reason)
+    if result.get("error"):
+        return result["error"]
+    return f"已將 {result['symbol']} 從觀察名單移除"
 
 
 def _init_storage_before_serving() -> None:

@@ -6,34 +6,32 @@ Candidate discovery is deterministic (same reasoning as daily_brief: this
 runs unattended, so finding *what's worth looking at* must not depend on
 the LLM remembering to check). The actual buy/sell/watch *decision* is
 delegated to the same react agent (src/agents/research_agent.py) used for
-free-form questions, via the paper_trade_status/buy/sell MCP tools --
-Claude decides for itself which data (technical/fundamental/chip/MOPS/
-news/...) it wants to check before acting, the same way it would for a
-user-asked question. This was a deliberate choice after discussing the
-trade-off: a hand-rolled fixed-data-then-decide prompt guarantees nothing
-gets skipped but can't see anything outside a hardcoded bundle; the user
-preferred richer, self-directed context over that guarantee.
+free-form questions, via the paper_trade_status/buy/sell/watchlist_drop
+MCP tools -- Claude decides for itself which data it wants to check
+before acting, the same way it would for a user-asked question.
 
-Two fixed cadences, not LLM-self-paced (deliberate -- predictable cost,
-still "checks more when it matters"):
-- broad scan (every BROAD_SCAN_INTERVAL): news -> hot-stock discovery,
-  same helpers daily_brief uses, to find new watchlist candidates.
-- tight scan (every TIGHT_SCAN_INTERVAL, 4x more often): one run_research()
-  call covering every due watchlist candidate and every open position.
+Two position horizons, not just one undifferentiated bucket (per
+discussion): a short_term position stays in the tight 5-minute loop so
+its exit timing gets watched closely; a long_term position graduates out
+of that and only gets reviewed at the broad-scan cadence (40 min) --
+"buy and hold, check in periodically" instead of "watch every tick."
+The agent itself chooses the horizon when it calls paper_trade_buy.
 
-The watchlist is in-memory only, not persisted -- it's not a committed
-decision, and rebuilding it from a fresh broad scan after a restart is
-fine. Only actual open/closed positions (src/memory/paper_trading_store.py)
-are durable. Watchlist entries that are never bought expire after
-WATCHLIST_TTL -- there's no explicit "drop" signal anymore since the
-decision is free-form text, not parsed JSON, so stale candidates are
-cleared mechanically instead of by LLM confirmation.
+The watchlist lives in the database (paper_watchlist table), not an
+in-memory dict -- see src/memory/paper_trading_store.py's module
+docstring for why (the MCP tool subprocess is a different OS process and
+can only affect shared state through the DB). Removal is primarily
+agent-driven (watchlist_drop, called when the agent decides a candidate
+isn't worth tracking anymore), with a long mechanical TTL as a safety net
+for candidates the agent simply never acts on.
 """
 
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, time, timedelta, timezone
+import time
+from datetime import datetime, timedelta, timezone
+from datetime import time as dtime
 
 from loguru import logger
 
@@ -41,19 +39,22 @@ from src.agents.daily_brief import _fetch_news
 from src.agents.market_agent import _extract_hot_stocks
 from src.agents.research_agent import run_research
 from src.llm_claude_code import ALL_TOOL_NAMES
-from src.memory.paper_trading_store import get_open_positions
+from src.memory.paper_trading_store import (
+    add_to_watchlist,
+    expire_watchlist,
+    get_open_positions,
+    get_watchlist,
+    touch_watchlist,
+)
 from src.memory.store import init_storage
 
 _TW_TZ = timezone(timedelta(hours=8))
-BROAD_SCAN_INTERVAL = 20 * 60
+BROAD_SCAN_INTERVAL = 40 * 60
 TIGHT_SCAN_INTERVAL = 5 * 60
-WATCHLIST_TTL = 2 * 60 * 60
+WATCHLIST_TTL = 5 * 60 * 60  # safety net only -- see module docstring
 TICK_SECONDS = 60
-_TRADING_START = time(9, 0)
-_TRADING_END = time(13, 30)
-
-# {symbol: {"first_seen": float, "last_checked": float}}
-_watchlist: dict[str, dict] = {}
+_TRADING_START = dtime(9, 0)
+_TRADING_END = dtime(13, 30)
 
 
 def _tw_now() -> datetime:
@@ -76,82 +77,109 @@ def _next_session_start(now: datetime) -> datetime:
 
 
 async def _broad_scan() -> None:
+    """Every BROAD_SCAN_INTERVAL: (1) discover new watchlist candidates from
+    news, (2) sweep the watchlist's mechanical safety-net expiry, (3) give
+    long_term positions a periodic check-in -- they're deliberately not
+    part of the 5-minute tight scan."""
     logger.info("paper_trading_loop: broad scan (news -> hot stocks)")
     news_articles = await _fetch_news()
     candidates = await _extract_hot_stocks(news_articles)
 
     open_symbols = {p["symbol"] for p in await get_open_positions()}
-    now_ts = _tw_now().timestamp()
+    watchlist_symbols = {w["symbol"] for w in await get_watchlist()}
     new_count = 0
     for symbol in candidates:
-        if symbol in open_symbols or symbol in _watchlist:
+        if symbol in open_symbols or symbol in watchlist_symbols:
             continue
-        _watchlist[symbol] = {"first_seen": now_ts, "last_checked": 0.0}
+        await add_to_watchlist(symbol)
         new_count += 1
     logger.info(
         f"paper_trading_loop: broad scan found {len(candidates)} candidates, "
         f"{new_count} new to watchlist"
     )
 
+    expired = await expire_watchlist(time.time() - WATCHLIST_TTL)
+    if expired:
+        logger.info(
+            f"paper_trading_loop: {expired} expired off watchlist (safety net, never dropped)"
+        )
 
-def _expire_stale_watchlist(open_symbols: set[str], now_ts: float) -> None:
-    cutoff = now_ts - WATCHLIST_TTL
-    for symbol in list(_watchlist.keys()):
-        if symbol not in open_symbols and _watchlist[symbol]["first_seen"] < cutoff:
-            del _watchlist[symbol]
-            logger.info(f"paper_trading_loop: {symbol} expired off watchlist (never bought)")
+    await _review_long_term_positions()
+
+
+async def _review_long_term_positions() -> None:
+    long_term = await get_open_positions(horizon="long_term")
+    if not long_term:
+        return
+
+    logger.info(f"paper_trading_loop: reviewing {len(long_term)} long-term position(s)")
+    position_lines = [
+        f"- {p['symbol']}（進場 {p['entry_price']}，{p['entry_date']}，長期持有）"
+        for p in long_term
+    ]
+    prompt = (
+        "這是長期持有部位的例行檢視（較低頻率，每次廣掃才會問一次，不是每 5 分鐘）。"
+        "請檢查以下長期部位，只有在有明確理由時才考慮賣出，否則維持長期持有的初衷，"
+        "不需要因為短線波動就出場。務必實際查證真實數據後再決定。\n\n"
+        "目前長期持有部位：\n" + "\n".join(position_lines)
+    )
+    try:
+        result = await run_research(prompt, [], tool_names=ALL_TOOL_NAMES)
+        conclusion = result.get("conclusion", "")
+        logger.info(f"paper_trading_loop: long-term review conclusion — {conclusion}")
+    except Exception as exc:
+        logger.warning(f"paper_trading_loop: long-term review failed: {exc}")
 
 
 async def _tight_scan() -> None:
+    """Every TIGHT_SCAN_INTERVAL: watchlist candidates + short_term
+    positions only -- long_term positions are handled by the broad scan
+    instead, at a much lower frequency."""
     now_ts = _tw_now().timestamp()
-    open_positions = await get_open_positions()
-    open_symbols = {p["symbol"] for p in open_positions}
-
-    _expire_stale_watchlist(open_symbols, now_ts)
+    watchlist = await get_watchlist()
+    short_term_positions = await get_open_positions(horizon="short_term")
 
     due_watchlist = [
-        s for s, meta in _watchlist.items()
-        if now_ts - meta["last_checked"] >= TIGHT_SCAN_INTERVAL
+        w["symbol"] for w in watchlist if now_ts - w["last_checked"] >= TIGHT_SCAN_INTERVAL
     ]
-    if not due_watchlist and not open_positions:
+    if not due_watchlist and not short_term_positions:
         return
 
     logger.info(
         f"paper_trading_loop: tight scan — {len(due_watchlist)} watchlist due, "
-        f"{len(open_positions)} open positions"
+        f"{len(short_term_positions)} short-term positions"
     )
 
     watchlist_lines = [f"- {s}" for s in due_watchlist] or ["（無）"]
     position_lines = [
-        f"- {p['symbol']}（進場 {p['entry_price']}，{p['entry_date']}）" for p in open_positions
+        f"- {p['symbol']}（進場 {p['entry_price']}，{p['entry_date']}）"
+        for p in short_term_positions
     ] or ["（無）"]
 
     prompt = (
-        "現在是台股交易時段，這是紙上交易（模擬帳戶）的例行檢查。請檢查以下清單，"
+        "現在是台股交易時段，這是紙上交易（模擬帳戶）短線操作的例行檢查。請檢查以下清單，"
         "自行判斷是否要對其中任何股票採取行動（買進、賣出、或都不動作）。"
-        "務必實際呼叫工具查證真實數據後再決定，不要只憑下方名單文字判斷。\n\n"
+        "務必實際呼叫工具查證真實數據後再決定，不要只憑下方名單文字判斷。"
+        "若判斷某支股票不用再追蹤了，請呼叫 watchlist_drop 移除。\n\n"
         "觀察名單（尚未持有，值得留意的候選股）：\n" + "\n".join(watchlist_lines) + "\n\n"
-        "目前持有中部位：\n" + "\n".join(position_lines)
+        "目前短線持有中部位：\n" + "\n".join(position_lines)
     )
 
     try:
-        # Only this call site opts into the full tool set (incl. paper_trade_*)
-        # -- see llm_claude_code.py's USER_FACING_TOOL_NAMES/ALL_TOOL_NAMES split.
+        # Only this call site (and _review_long_term_positions) opts into the
+        # full tool set (incl. paper_trade_*/watchlist_drop) -- see
+        # llm_claude_code.py's USER_FACING_TOOL_NAMES/ALL_TOOL_NAMES split.
         result = await run_research(prompt, [], tool_names=ALL_TOOL_NAMES)
         logger.info(f"paper_trading_loop: cycle conclusion — {result.get('conclusion', '')}")
     except Exception as exc:
         logger.warning(f"paper_trading_loop: research call failed: {exc}")
         return
 
-    for symbol in due_watchlist:
-        if symbol in _watchlist:
-            _watchlist[symbol]["last_checked"] = now_ts
-    # A watchlist symbol that got bought this cycle is now an open position;
-    # drop it from the watchlist so it isn't asked about twice.
-    new_open_symbols = {p["symbol"] for p in await get_open_positions()}
-    for symbol in list(_watchlist.keys()):
-        if symbol in new_open_symbols:
-            del _watchlist[symbol]
+    # Only touch symbols still actually on the watchlist -- a buy or a
+    # watchlist_drop during this cycle already removed them from the DB.
+    remaining = {w["symbol"] for w in await get_watchlist()}
+    still_due = [s for s in due_watchlist if s in remaining]
+    await touch_watchlist(still_due, now_ts)
 
 
 async def run() -> None:

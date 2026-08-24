@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS paper_positions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     symbol TEXT NOT NULL,
     status TEXT NOT NULL,              -- open | closed
+    horizon TEXT NOT NULL DEFAULT 'short_term',  -- short_term | long_term
     entry_price REAL NOT NULL,
     entry_date TEXT NOT NULL,
     entry_reason TEXT NOT NULL DEFAULT '',
@@ -103,7 +104,33 @@ CREATE TABLE IF NOT EXISTS paper_positions (
 );
 
 CREATE INDEX IF NOT EXISTS ix_paper_positions_symbol_status ON paper_positions (symbol, status);
+
+-- Watchlist: candidates spotted by the broad scan but not yet bought.
+-- Persisted (unlike an earlier in-memory-only version) because
+-- paper_trading_loop.py and the MCP tool subprocess (mcp_server.py, spawned
+-- fresh per claude -p call) are different OS processes -- an agent-driven
+-- watchlist_drop tool call can only affect state that both sides can see,
+-- which means the database, not a Python dict in one process's memory.
+CREATE TABLE IF NOT EXISTS paper_watchlist (
+    symbol TEXT PRIMARY KEY,
+    first_seen REAL NOT NULL,
+    last_checked REAL NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL DEFAULT ''
+);
 """
+
+
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    """Adds columns to tables that already existed before this column was
+    introduced. CREATE TABLE IF NOT EXISTS above only applies to fresh
+    databases -- an existing paper_positions table (already holding real
+    rows from earlier live testing) needs an explicit ALTER TABLE."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(paper_positions)").fetchall()}
+    if "horizon" not in cols:
+        conn.execute(
+            "ALTER TABLE paper_positions ADD COLUMN horizon TEXT NOT NULL DEFAULT 'short_term'"
+        )
+        conn.commit()
 
 
 def _connect() -> sqlite3.Connection:
@@ -120,6 +147,7 @@ def _create_schema() -> None:
     try:
         conn.executescript(_SCHEMA)
         conn.commit()
+        _migrate_schema(conn)
     finally:
         conn.close()
 
