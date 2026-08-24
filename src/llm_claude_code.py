@@ -198,11 +198,14 @@ async def claude_code_research(
     user_message: str,
     tool_names: list[str] = USER_FACING_TOOL_NAMES,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
-) -> str:
+) -> dict:
     """Run one Claude Code agentic turn with MCP tools bound.
 
     Claude Code runs its own internal tool-calling loop (may invoke
-    several MCP tools before answering) and returns the final text.
+    several MCP tools before answering). Returns {"result": text,
+    "cost_usd": float} -- cost is exposed (rather than just logged at
+    debug level) so callers that run unattended for hours, like
+    paper_trading_loop.py, can track and cap real spend.
     """
     prompt = system + "\n\n" + _render_prompt(history, user_message)
     mcp_config_path = PROJECT_ROOT / ".mcp_market_agent_config.json"
@@ -222,4 +225,7 @@ async def claude_code_research(
     if denials:
         logger.warning(f"claude_code_research: {len(denials)} tool permission denials: {denials}")
 
-    return payload.get("result", "")
+    return {
+        "result": payload.get("result", ""),
+        "cost_usd": payload.get("total_cost_usd", 0.0),
+    }

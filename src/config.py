@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     # Paper trading loop (experimental) — runs as a background task inside
     # the same process as the Discord bot, not a separate program
     paper_trading_enabled: bool = False
+    # Hard spend cap per trading day (USD, based on claude -p's own reported
+    # total_cost_usd) -- run_research() calls run agentically and can cost
+    # $0.40+ per cycle, unattended, for hours. Once exceeded, decision calls
+    # pause until the next trading session; candidate discovery (cheap,
+    # non-agentic) keeps running.
+    paper_trading_daily_budget_usd: float = 5.0
 
     # App
     log_level: str = "INFO"

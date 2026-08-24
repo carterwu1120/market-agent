@@ -110,8 +110,14 @@ async def run_research(
             content = f"[分析標的: {', '.join(symbols)}]\n{content}"
         history.append({"role": m["role"], "content": content})
 
-    text = await claude_code_research(REACT_SYSTEM, history, user_message, tool_names=tool_names)
-    report, conclusion = extract_conclusion(text)
+    payload = await claude_code_research(REACT_SYSTEM, history, user_message, tool_names=tool_names)
+    report, conclusion = extract_conclusion(payload["result"])
     used_symbols = list(dict.fromkeys(_SYMBOL_RE.findall(report)))
-    logger.info(f"ResearchAgent: done, symbols={used_symbols}")
-    return {"final_report": report, "conclusion": conclusion, "sources": [], "target_symbols": used_symbols}
+    logger.info(f"ResearchAgent: done, symbols={used_symbols}, cost=${payload['cost_usd']:.4f}")
+    return {
+        "final_report": report,
+        "conclusion": conclusion,
+        "sources": [],
+        "target_symbols": used_symbols,
+        "cost_usd": payload["cost_usd"],
+    }

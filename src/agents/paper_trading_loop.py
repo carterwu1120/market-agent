@@ -38,6 +38,7 @@ from loguru import logger
 from src.agents.daily_brief import _fetch_news
 from src.agents.market_agent import _extract_hot_stocks
 from src.agents.research_agent import run_research
+from src.config import settings
 from src.llm_claude_code import ALL_TOOL_NAMES
 from src.memory.paper_trading_store import (
     add_to_watchlist,
@@ -47,6 +48,7 @@ from src.memory.paper_trading_store import (
     touch_watchlist,
 )
 from src.memory.store import init_storage
+from src.tools.discord_tools import send_channel_message
 
 _TW_TZ = timezone(timedelta(hours=8))
 BROAD_SCAN_INTERVAL = 40 * 60
@@ -55,6 +57,13 @@ WATCHLIST_TTL = 5 * 60 * 60  # safety net only -- see module docstring
 TICK_SECONDS = 60
 _TRADING_START = dtime(9, 0)
 _TRADING_END = dtime(13, 30)
+
+# Daily spend tracking (src.config's paper_trading_daily_budget_usd) -- reset
+# whenever the tracked date changes, which naturally happens once a day given
+# the loop sleeps overnight between sessions.
+_daily_cost_usd = 0.0
+_daily_cost_date = None
+_budget_notified = False
 
 
 def _tw_now() -> datetime:
@@ -74,6 +83,48 @@ def _next_session_start(now: datetime) -> datetime:
     while candidate.weekday() >= 5:
         candidate += timedelta(days=1)
     return candidate
+
+
+def _reset_cost_if_new_day(now: datetime) -> None:
+    """Both _budget_exceeded and _track_cost call this themselves rather
+    than relying on being called in a particular order -- a version that
+    only reset inside _budget_exceeded() silently accumulated cost against
+    a stale day if _track_cost() ever ran first."""
+    global _daily_cost_usd, _daily_cost_date, _budget_notified
+    today = now.date()
+    if _daily_cost_date != today:
+        _daily_cost_usd = 0.0
+        _daily_cost_date = today
+        _budget_notified = False
+
+
+def _budget_exceeded(now: datetime) -> bool:
+    """Reports whether today's cumulative run_research() cost has hit the
+    configured cap."""
+    _reset_cost_if_new_day(now)
+    return _daily_cost_usd >= settings.paper_trading_daily_budget_usd
+
+
+async def _track_cost(cost_usd: float) -> None:
+    """Accumulates spend and fires a one-time Discord notice the moment the
+    daily budget is first crossed within a day (not every cycle after)."""
+    global _daily_cost_usd, _budget_notified
+    _reset_cost_if_new_day(_tw_now())
+    _daily_cost_usd += cost_usd
+    if _daily_cost_usd >= settings.paper_trading_daily_budget_usd and not _budget_notified:
+        _budget_notified = True
+        logger.warning(
+            f"paper_trading_loop: daily budget exceeded "
+            f"(${_daily_cost_usd:.2f} >= ${settings.paper_trading_daily_budget_usd:.2f}), "
+            f"pausing decision calls until next session"
+        )
+        if settings.schedule_report_channel_id:
+            await send_channel_message(
+                settings.schedule_report_channel_id,
+                f"⚠️ 紙上交易今日花費已達上限（${_daily_cost_usd:.2f} / "
+                f"${settings.paper_trading_daily_budget_usd:.2f}），暫停決策直到下個交易時段。"
+                f"觀察名單仍會繼續更新，但不會再判斷買賣。",
+            )
 
 
 async def _broad_scan() -> None:
@@ -112,6 +163,10 @@ async def _review_long_term_positions() -> None:
     if not long_term:
         return
 
+    if _budget_exceeded(_tw_now()):
+        logger.info("paper_trading_loop: long-term review skipped, daily budget exceeded")
+        return
+
     logger.info(f"paper_trading_loop: reviewing {len(long_term)} long-term position(s)")
     position_lines = [
         f"- {p['symbol']}（進場 {p['entry_price']}，{p['entry_date']}，長期持有）"
@@ -125,6 +180,7 @@ async def _review_long_term_positions() -> None:
     )
     try:
         result = await run_research(prompt, [], tool_names=ALL_TOOL_NAMES)
+        await _track_cost(result.get("cost_usd", 0.0))
         conclusion = result.get("conclusion", "")
         logger.info(f"paper_trading_loop: long-term review conclusion — {conclusion}")
     except Exception as exc:
@@ -143,6 +199,10 @@ async def _tight_scan() -> None:
         w["symbol"] for w in watchlist if now_ts - w["last_checked"] >= TIGHT_SCAN_INTERVAL
     ]
     if not due_watchlist and not short_term_positions:
+        return
+
+    if _budget_exceeded(_tw_now()):
+        logger.info("paper_trading_loop: tight scan skipped, daily budget exceeded")
         return
 
     logger.info(
@@ -170,6 +230,7 @@ async def _tight_scan() -> None:
         # full tool set (incl. paper_trade_*/watchlist_drop) -- see
         # llm_claude_code.py's USER_FACING_TOOL_NAMES/ALL_TOOL_NAMES split.
         result = await run_research(prompt, [], tool_names=ALL_TOOL_NAMES)
+        await _track_cost(result.get("cost_usd", 0.0))
         logger.info(f"paper_trading_loop: cycle conclusion — {result.get('conclusion', '')}")
     except Exception as exc:
         logger.warning(f"paper_trading_loop: research call failed: {exc}")
