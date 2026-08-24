@@ -57,6 +57,19 @@ class Settings(BaseSettings):
     # so short-term churn can't crowd out long-term holds' allotment.
     paper_trading_max_short_term_positions: int = 20
     paper_trading_max_long_term_positions: int = 20
+    # Mechanical stop-loss safety net -- independent of agent judgment, checked
+    # every tick (60s) against real fetched prices, not gated by the daily
+    # LLM budget (it never calls the LLM). This exists specifically for the
+    # failure modes the agent-driven, notes-informed judgment can't cover:
+    # a bad read of the chart, or decision calls paused because
+    # paper_trading_daily_budget_usd was hit while a position keeps sliding.
+    # Not a take-profit -- forcing an exit on gains would cut short the
+    # "trailing stop, let winners run" philosophy in the user's own
+    # knowledge_base notes. Long-term tolerates a wider drawdown than
+    # short-term by design (values are magnitudes; a position is force-sold
+    # when pnl_pct <= -this value).
+    paper_trading_short_term_stop_loss_pct: float = 15.0
+    paper_trading_long_term_stop_loss_pct: float = 20.0
 
     # App
     log_level: str = "INFO"

@@ -37,6 +37,7 @@ from loguru import logger
 
 from src.agents.daily_brief import _fetch_news
 from src.agents.market_agent import _extract_hot_stocks
+from src.agents.paper_trading import calc_pnl_pct
 from src.agents.research_agent import run_research
 from src.config import settings
 from src.llm_claude_code import ALL_TOOL_NAMES
@@ -49,6 +50,8 @@ from src.memory.paper_trading_store import (
 )
 from src.memory.store import init_storage
 from src.tools.discord_tools import send_channel_message
+from src.tools.paper_trading_actions import sell
+from src.tools.stock_data import get_stock_price
 
 _TW_TZ = timezone(timedelta(hours=8))
 BROAD_SCAN_INTERVAL = 40 * 60
@@ -124,6 +127,38 @@ async def _track_cost(cost_usd: float) -> None:
                 f"⚠️ 紙上交易今日花費已達上限（${_daily_cost_usd:.2f} / "
                 f"${settings.paper_trading_daily_budget_usd:.2f}），暫停決策直到下個交易時段。"
                 f"觀察名單仍會繼續更新，但不會再判斷買賣。",
+            )
+
+
+async def _check_mechanical_stop_loss() -> None:
+    """Hard, non-negotiable safety net -- independent of agent judgment,
+    checked every tick against real fetched prices, never calls the LLM so
+    it still fires even when the daily budget is exhausted and decision
+    calls are paused. Complements (not replaces) the qualitative stop-loss
+    rules in the user's knowledge_base notes, which rely on the agent
+    correctly reading chart patterns each cycle -- this is what catches a
+    bad read or a paused decision loop. Stop-loss only, no take-profit:
+    forcing an exit on gains would cut short the notes' own "trailing stop,
+    let winners run" logic."""
+    positions = await get_open_positions()
+    for p in positions:
+        threshold = (
+            settings.paper_trading_short_term_stop_loss_pct
+            if p["horizon"] == "short_term"
+            else settings.paper_trading_long_term_stop_loss_pct
+        )
+        price_data = await get_stock_price(p["symbol"])
+        price = price_data.get("last_price")
+        if price_data.get("error") or not price:
+            continue
+        pnl = calc_pnl_pct("buy", p["entry_price"], price)
+        if pnl is not None and pnl <= -threshold:
+            logger.warning(
+                f"paper_trading_loop: mechanical stop-loss triggered for "
+                f"{p['symbol']} ({pnl}% <= -{threshold}%)"
+            )
+            await sell(
+                p["symbol"], reason="機械式停損保險觸發（非 agent 判斷）", exit_reason="stop_loss"
             )
 
 
@@ -265,6 +300,10 @@ async def run() -> None:
 
         now_ts = now.timestamp()
         try:
+            # Every tick, not gated by an interval -- cheap (price fetch
+            # only, no LLM call) and must not wait on the same cadence as
+            # the agentic scans it's a safety net against.
+            await _check_mechanical_stop_loss()
             if now_ts - last_broad >= BROAD_SCAN_INTERVAL:
                 await _broad_scan()
                 last_broad = now_ts
