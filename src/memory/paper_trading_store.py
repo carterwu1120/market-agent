@@ -19,17 +19,28 @@ from loguru import logger
 from src.memory.store import _connect
 
 
-def _open_position_sync(symbol: str, entry_price: float, entry_reason: str, horizon: str) -> int:
+def _open_position_sync(
+    symbol: str,
+    entry_price: float,
+    entry_reason: str,
+    horizon: str,
+    shares: int,
+    allocation_amount: float,
+) -> int:
     now = datetime.now(UTC)
     conn = _connect()
     try:
         cur = conn.execute(
             """
             INSERT INTO paper_positions
-                (symbol, status, horizon, entry_price, entry_date, entry_reason, created_at)
-            VALUES (?, 'open', ?, ?, ?, ?, ?)
+                (symbol, status, horizon, shares, allocation_amount,
+                 entry_price, entry_date, entry_reason, created_at)
+            VALUES (?, 'open', ?, ?, ?, ?, ?, ?, ?)
             """,
-            (symbol, horizon, entry_price, now.date().isoformat(), entry_reason, now.timestamp()),
+            (
+                symbol, horizon, shares, allocation_amount,
+                entry_price, now.date().isoformat(), entry_reason, now.timestamp(),
+            ),
         )
         conn.commit()
         return cur.lastrowid
@@ -84,13 +95,22 @@ def _get_all_sync() -> list[dict]:
 
 
 async def open_position(
-    symbol: str, entry_price: float, entry_reason: str = "", horizon: str = "short_term"
+    symbol: str,
+    entry_price: float,
+    entry_reason: str = "",
+    horizon: str = "short_term",
+    shares: int = 0,
+    allocation_amount: float = 0.0,
 ) -> int | None:
-    """Records a new open position with a real fetched entry_price. Returns
-    the new row id, or None if the write failed (best-effort, never raises)."""
+    """Records a new open position with a real fetched entry_price. shares/
+    allocation_amount are recorded at entry time (not recomputed later) so
+    the capital-simulation replay in evaluate_paper_trades() stays accurate
+    even if config sizing bounds change afterward. Returns the new row id,
+    or None if the write failed (best-effort, never raises)."""
     try:
         return await asyncio.to_thread(
-            _open_position_sync, symbol, entry_price, entry_reason, horizon
+            _open_position_sync, symbol, entry_price, entry_reason, horizon, shares,
+            allocation_amount,
         )
     except Exception as exc:
         logger.warning(f"paper_positions: open_position failed for {symbol}: {exc}")

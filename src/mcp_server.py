@@ -283,39 +283,55 @@ async def gmail_send(to: str, subject: str, body: str) -> str:
 
 @mcp.tool()
 async def paper_trade_status() -> str:
-    """查詢目前紙上交易的持倉狀況：有哪些部位持有中（含浮動損益、短線/長期分類）、最近平倉的紀錄。"""
+    """查詢目前紙上交易的持倉狀況：有哪些部位持有中（含浮動損益、短線/長期分類）、
+    最近平倉的紀錄，以及模擬帳戶目前的可用現金（下單前用這個確認額度夠不夠）。"""
     result = await paper_trading_actions.get_status()
+    eq = result["equity"]
+    equity_line = (
+        f"[模擬帳戶] 可用現金 {eq['current_cash']:.0f} / 起始本金 {eq['starting_capital']:.0f}，"
+        f"目前總資產 {eq['current_equity']:.0f}（累計報酬 {eq['total_return_pct']}%）"
+    )
     if not result["positions"]:
-        return "目前沒有任何紙上交易部位"
+        return f"目前沒有任何紙上交易部位\n{equity_line}"
     lines = []
     for p in result["positions"]:
         horizon_label = "長期持有" if p.get("horizon") == "long_term" else "短線操作"
         if p["status"] == "open":
             lines.append(
-                f"{p['symbol']}：持有中（{horizon_label}），進場 {p['entry_price']}"
-                f"（{p['entry_date']}），浮動損益 {p['pnl_pct']}%"
+                f"{p['symbol']}：持有中（{horizon_label}），{p['shares']} 股，"
+                f"進場 {p['entry_price']}（{p['entry_date']}），浮動損益 {p['pnl_pct']}%"
             )
         else:
             lines.append(
-                f"{p['symbol']}：已平倉（{horizon_label}），進場 {p['entry_price']} → 出場 "
-                f"{p['exit_price']}（{p['exit_reason']}），實現損益 {p['pnl_pct']}%"
+                f"{p['symbol']}：已平倉（{horizon_label}），{p['shares']} 股，"
+                f"進場 {p['entry_price']} → 出場 {p['exit_price']}"
+                f"（{p['exit_reason']}），實現損益 {p['pnl_pct']}%"
             )
+    lines.append(equity_line)
     return "\n".join(lines)
 
 
 @mcp.tool()
-async def paper_trade_buy(symbol: str, reason: str, horizon: str = "short_term") -> str:
+async def paper_trade_buy(
+    symbol: str, reason: str, horizon: str = "short_term", allocation_pct: float = 10.0
+) -> str:
     """對指定股票開一筆紙上交易買進部位（模擬，非真實下單）。
     symbol 格式：2330.TW。reason：買進理由，會被記錄下來。
     horizon 只能是 short_term（短線，會持續被緊盯、需要你自己判斷出場時機）或
     long_term（長期持有，之後只會用較低頻率的資訊追蹤，不會每次緊盯都問你）。
+    allocation_pct：這筆要用模擬本金的百分之多少去買，依你的信心程度自行判斷；
+    系統會自動夾在允許的上下限之間，超出範圍不會整筆失敗。現金不足時交易會被拒絕，
+    可先呼叫 paper_trade_status 查可用現金。
     價格一律用系統即時查到的真實股價，不接受自行指定價格。
     同一支股票若已有持有中部位，不可重複買進，請先用 paper_trade_status 確認。
     買進後會自動從觀察名單移除，不需要另外呼叫 watchlist_drop。"""
-    result = await paper_trading_actions.buy(symbol, reason, horizon)
+    result = await paper_trading_actions.buy(symbol, reason, horizon, allocation_pct)
     if result.get("error"):
         return result["error"]
-    return f"已買進 {result['symbol']} @ {result['price']}（id={result['position_id']}）"
+    return (
+        f"已買進 {result['symbol']} @ {result['price']} x {result['shares']} 股"
+        f"（約 {result['allocation_amount']:.0f} 元，id={result['position_id']}）"
+    )
 
 
 @mcp.tool()

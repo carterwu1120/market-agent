@@ -70,6 +70,18 @@ class Settings(BaseSettings):
     # when pnl_pct <= -this value).
     paper_trading_short_term_stop_loss_pct: float = 15.0
     paper_trading_long_term_stop_loss_pct: float = 20.0
+    # Capital simulation -- lets /performance report a realistic equity
+    # curve/drawdown alongside (not instead of) the size-agnostic per-trade
+    # win_rate/avg_return_pct stats. starting_capital never changes after
+    # positions exist (each position's shares/allocation_amount are recorded
+    # at entry time, not recomputed from current config). Allocation % per
+    # trade is the agent's own call (paper_trade_buy's allocation_pct arg,
+    # same "agent decides, mechanical bounds clamp it" shape as horizon
+    # isn't clamped but position caps/stop-loss are) -- these bounds exist
+    # so one overconfident call can't all-in a single symbol.
+    paper_trading_starting_capital: float = 500_000.0
+    paper_trading_min_allocation_pct: float = 5.0
+    paper_trading_max_allocation_pct: float = 20.0
 
     # App
     log_level: str = "INFO"

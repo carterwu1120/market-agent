@@ -10,7 +10,13 @@ shared with the /performance command) and src/memory/paper_trading_store.py
 
 from __future__ import annotations
 
-from src.agents.paper_trading import calc_pnl_pct, evaluate_paper_trades
+from src.agents.paper_trading import (
+    calc_allocation,
+    calc_pnl_pct,
+    evaluate_paper_trades,
+    get_available_cash,
+    simulate_portfolio_equity,
+)
 from src.config import settings
 from src.memory.paper_trading_store import (
     close_position,
@@ -26,15 +32,25 @@ _VALID_HORIZONS = {"short_term", "long_term"}
 
 
 async def get_status() -> dict:
-    """Same shape as evaluate_paper_trades(): {"positions": [...], ...}."""
-    return await evaluate_paper_trades()
+    """evaluate_paper_trades()'s shape plus an "equity" key (see
+    simulate_portfolio_equity) so the agent can see how much simulated
+    cash it actually has before sizing its next paper_trade_buy."""
+    result = await evaluate_paper_trades()
+    result["equity"] = simulate_portfolio_equity(result["positions"])
+    return result
 
 
-async def buy(symbol: str, reason: str, horizon: str = "short_term") -> dict:
-    """Opens a position at the real current price. Returns {"error": str}
-    on failure, or {"success": True, "symbol", "price", "position_id"}.
-    Also removes the symbol from the watchlist if it was on one -- once
-    bought, it is tracked as a position, not a candidate."""
+async def buy(
+    symbol: str, reason: str, horizon: str = "short_term", allocation_pct: float = 10.0
+) -> dict:
+    """Opens a position at the real current price. allocation_pct (% of the
+    fixed starting capital, not current equity) is the agent's own call on
+    conviction/sizing, clamped into [min, max] by calc_allocation() so one
+    overconfident call can't all-in a single symbol. Returns {"error": str}
+    on failure, or {"success": True, "symbol", "price", "shares",
+    "allocation_amount", "position_id"}. Also removes the symbol from the
+    watchlist if it was on one -- once bought, it is tracked as a position,
+    not a candidate."""
     if horizon not in _VALID_HORIZONS:
         horizon = "short_term"
 
@@ -64,11 +80,30 @@ async def buy(symbol: str, reason: str, horizon: str = "short_term") -> dict:
             "error": f"{symbol} 無法取得即時股價，交易取消：{price_data.get('error', '無資料')}"
         }
 
-    position_id = await open_position(symbol, price, reason, horizon)
+    shares, allocation_amount = calc_allocation(allocation_pct, price)
+    if shares < 1:
+        return {"error": f"{symbol} 股價 {price} 過高，分配額度買不到 1 股，交易取消"}
+
+    available_cash = await get_available_cash()
+    if allocation_amount > available_cash:
+        return {
+            "error": (
+                f"模擬現金不足（需要 {allocation_amount:.0f}，可用 {available_cash:.0f}），"
+                f"須先賣出既有部位才能買進 {symbol}"
+            )
+        }
+
+    position_id = await open_position(symbol, price, reason, horizon, shares, allocation_amount)
     await remove_from_watchlist(symbol)
     horizon_label = "短線操作" if horizon == "short_term" else "長期持有"
-    await _notify(f"📈 紙上交易買進：{symbol} @ {price}（{horizon_label}）\n理由：{reason}")
-    return {"success": True, "symbol": symbol, "price": price, "position_id": position_id}
+    await _notify(
+        f"📈 紙上交易買進：{symbol} @ {price} x {shares} 股（約 {allocation_amount:.0f} 元，"
+        f"{horizon_label}）\n理由：{reason}"
+    )
+    return {
+        "success": True, "symbol": symbol, "price": price, "shares": shares,
+        "allocation_amount": allocation_amount, "position_id": position_id,
+    }
 
 
 async def sell(symbol: str, reason: str, exit_reason: str) -> dict:

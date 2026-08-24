@@ -85,6 +85,20 @@ flowchart TD
 
 進出場價格一律來自 `paper_trade_buy`/`paper_trade_sell` 工具自己即時查到的真實股價，不是 LLM 自己講的數字——跟這專案其他所有功能同一個原則。
 
+## 資金模擬——不只看單筆 % 報酬，也看真實資金會怎麼變
+
+一開始績效只有 `evaluate_paper_trades()` 算的「每筆漲跌幾 %」（`win_rate`/`avg_return_pct`）——這個指標很乾淨，跟部位大小無關，適合看「選股/進出場判斷準不準」，但看不出「如果拿真的錢照這個策略操作，帳戶會變多少」。現在疊加一層資金模擬，**兩者並存、互不取代**：
+
+- `.env` 的 `PAPER_TRADING_STARTING_CAPITAL`（預設 500,000）設定模擬帳戶的起始本金
+- `paper_trade_buy` 多一個 `allocation_pct` 參數——這筆要押多少 % 本金，由 agent 自己依信心程度判斷（跟 `horizon` 一樣是 agent 的策略判斷，不是查證得到的市場數據）；系統用 `PAPER_TRADING_MIN_ALLOCATION_PCT`/`PAPER_TRADING_MAX_ALLOCATION_PCT`（預設 5%~20%）自動夾住，避免一次判斷失常就重壓單一檔
+- 股數 = 分配金額 ÷ 進場價，一律用整股計算，紀錄在 `paper_positions` 的 `shares`/`allocation_amount` 欄位（下單當下就固定，之後就算調整 `.env` 的百分比範圍也不會回頭影響已經開的部位）
+- 模擬現金不夠分配這筆，`paper_trade_buy` 直接拒絕——這是比 20 檔持倉上限更早發生作用的真實限制
+- `src/agents/paper_trading.py` 的 `get_available_cash()`/`simulate_portfolio_equity()` 都是**重播 `paper_positions` 的紀錄現算**，不是另外存一個會漂移的現金餘額欄位——`paper_positions` 本身就是唯一真相來源
+
+`simulate_portfolio_equity()` 也會算「已平倉最大回撤」，但這裡誠實講一個限制：因為沒有存逐日的權益快照，這個回撤只能從「每次平倉時的已實現損益」重建曲線，不包含還持有中部位期間的浮動震盪——不是真正連續的權益曲線，只是一個實用的近似值。
+
+`/performance` 跟 `paper_trade_status`（agent 下單前查額度用）都看得到：可用現金、目前總資產、累計報酬、已平倉最大回撤。
+
 ## 持倉上限——防失控，不是操作上限
 
 `paper_trade_buy` 一開始沒有任何數量限制，agent 理論上可以一路買下去。現在短線（`short_term`）跟長期（`long_term`）部位**各自獨立設上限**（`.env` 的 `PAPER_TRADING_MAX_SHORT_TERM_POSITIONS`/`PAPER_TRADING_MAX_LONG_TERM_POSITIONS`，預設各 20 檔），不是兩種合計一個總量——這樣短線頻繁進出不會把長期持有的額度吃光。達上限時 `paper_trade_buy` 直接回傳錯誤，agent 看到錯誤訊息後必須先賣出既有部位才能再買，不會硬闖。

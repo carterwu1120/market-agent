@@ -93,6 +93,8 @@ CREATE TABLE IF NOT EXISTS paper_positions (
     symbol TEXT NOT NULL,
     status TEXT NOT NULL,              -- open | closed
     horizon TEXT NOT NULL DEFAULT 'short_term',  -- short_term | long_term
+    shares INTEGER NOT NULL DEFAULT 0,
+    allocation_amount REAL NOT NULL DEFAULT 0,  -- capital committed at entry (shares * entry_price)
     entry_price REAL NOT NULL,
     entry_date TEXT NOT NULL,
     entry_reason TEXT NOT NULL DEFAULT '',
@@ -129,6 +131,14 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     if "horizon" not in cols:
         conn.execute(
             "ALTER TABLE paper_positions ADD COLUMN horizon TEXT NOT NULL DEFAULT 'short_term'"
+        )
+        conn.commit()
+    if "shares" not in cols:
+        conn.execute("ALTER TABLE paper_positions ADD COLUMN shares INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+    if "allocation_amount" not in cols:
+        conn.execute(
+            "ALTER TABLE paper_positions ADD COLUMN allocation_amount REAL NOT NULL DEFAULT 0"
         )
         conn.commit()
 

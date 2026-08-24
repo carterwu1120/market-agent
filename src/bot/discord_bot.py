@@ -172,38 +172,46 @@ async def cmd_clear(interaction: discord.Interaction):
 @bot.tree.command(name="performance", description="查看 agent 過去建議的紙上交易績效")
 async def cmd_performance(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
-    from src.agents.paper_trading import evaluate_paper_trades
+    from src.agents.paper_trading import evaluate_paper_trades, simulate_portfolio_equity
 
     result = await evaluate_paper_trades()
     if not result["positions"]:
         await interaction.followup.send("目前還沒有任何紙上交易記錄。")
         return
 
+    eq = simulate_portfolio_equity(result["positions"])
     lines = [
         f"**紙上交易績效**（持有中 {result['open_count']} 筆，已平倉 {result['closed_count']} 筆）",
         (
-            f"勝率（已平倉）：{result['win_rate']}%"
+            f"勝率（已平倉，跟部位大小無關）：{result['win_rate']}%"
             if result["win_rate"] is not None
             else "勝率：資料不足"
         ),
         (
-            f"平均報酬（已平倉）：{result['avg_return_pct']}%"
+            f"平均報酬（已平倉，跟部位大小無關）：{result['avg_return_pct']}%"
             if result["avg_return_pct"] is not None
             else "平均報酬：資料不足"
+        ),
+        (
+            f"模擬帳戶：起始本金 {eq['starting_capital']:,.0f} → 目前總資產 "
+            f"{eq['current_equity']:,.0f}（累計報酬 {eq['total_return_pct']}%，"
+            f"可用現金 {eq['current_cash']:,.0f}，"
+            f"已平倉最大回撤 {eq['realized_max_drawdown_pct']}%）"
         ),
         "",
     ]
     for p in result["positions"][-15:]:
         pnl = f"{p['pnl_pct']:+.2f}%" if p["pnl_pct"] is not None else "N/A"
         horizon_label = "長期" if p.get("horizon") == "long_term" else "短線"
+        shares = p.get("shares", 0)
         if p["status"] == "open":
             lines.append(
-                f"- {p['symbol']}（{horizon_label}）持有中（{p['entry_date']} 進場 "
+                f"- {p['symbol']}（{horizon_label}，{shares}股）持有中（{p['entry_date']} 進場 "
                 f"{p['entry_price']}）→ 浮動 {pnl}"
             )
         else:
             lines.append(
-                f"- {p['symbol']}（{horizon_label}）已平倉（{p['entry_date']} 進場 "
+                f"- {p['symbol']}（{horizon_label}，{shares}股）已平倉（{p['entry_date']} 進場 "
                 f"{p['entry_price']} → {p['exit_date']} 出場 {p['exit_price']}，"
                 f"{p['exit_reason']}）→ 實現 {pnl}"
             )

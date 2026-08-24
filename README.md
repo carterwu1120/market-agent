@@ -91,8 +91,8 @@ flowchart TD
 | `web_search(query, max_results)` | `web_search.search_web()`（自己下關鍵字，僅供參考背景） |
 | `company_announcements(symbol)` | `mops_data.get_material_info()`（TWSE MOPS，只有今天） |
 | `company_financial_summary(symbol)` | `mops_data.get_financial_summary()`（TWSE MOPS，只有最新一季） |
-| `paper_trade_status()` | 查詢紙上交易目前持倉與損益 |
-| `paper_trade_buy(symbol, reason, horizon)` | 開一筆紙上交易買進部位，價格用即時真實股價，horizon 選短線/長期 |
+| `paper_trade_status()` | 查詢紙上交易目前持倉與損益，含模擬帳戶可用現金/總資產 |
+| `paper_trade_buy(symbol, reason, horizon, allocation_pct)` | 開一筆紙上交易買進部位，價格用即時真實股價，horizon 選短線/長期，allocation_pct 為押多少 % 模擬本金（agent 自訂，系統夾在允許範圍內） |
 | `paper_trade_sell(symbol, reason, exit_reason)` | 對持有部位平倉，價格用即時真實股價 |
 | `watchlist_drop(symbol, reason)` | 把股票從觀察名單移除，agent 自行判斷不用再追蹤 |
 
