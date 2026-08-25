@@ -106,11 +106,23 @@ async def get_technical_indicators(symbol: str, period: str = "6mo") -> dict[str
         df.ta.rsi(length=14, append=True)
         df.ta.macd(fast=12, slow=26, signal=9, append=True)
         df.ta.bbands(length=20, append=True)
+        df.ta.sma(length=5, append=True)
+        df.ta.sma(length=10, append=True)
         df.ta.sma(length=20, append=True)
         df.ta.sma(length=60, append=True)
         df.ta.ema(length=12, append=True)
+        df.ta.stoch(k=14, d=3, smooth_k=3, append=True)  # KD -- STOCHk_14_3_3 / STOCHd_14_3_3
 
         latest = df.iloc[-1]
+        # 5-day average volume excluding today, same "帶量/爆量" concept as the
+        # user's own strategy notes (data/knowledge_base) -- ratio > ~3 is what
+        # those notes call "爆量".
+        volume_ratio = None
+        if len(df) >= 6:
+            prior_avg_volume = float(df["Volume"].iloc[-6:-1].mean())
+            if prior_avg_volume:
+                volume_ratio = round(float(latest["Volume"]) / prior_avg_volume, 2)
+
         return {
             "symbol": ticker_sym,
             "period": period,
@@ -121,9 +133,14 @@ async def get_technical_indicators(symbol: str, period: str = "6mo") -> dict[str
             "macd_hist": round(float(latest.get("MACDh_12_26_9", float("nan"))), 4),
             "bb_upper": round(float(latest.get("BBU_20_2.0_2.0", float("nan"))), 2),
             "bb_lower": round(float(latest.get("BBL_20_2.0_2.0", float("nan"))), 2),
+            "sma_5": round(float(latest.get("SMA_5", float("nan"))), 2),
+            "sma_10": round(float(latest.get("SMA_10", float("nan"))), 2),
             "sma_20": round(float(latest.get("SMA_20", float("nan"))), 2),
             "sma_60": round(float(latest.get("SMA_60", float("nan"))), 2),
             "ema_12": round(float(latest.get("EMA_12", float("nan"))), 2),
+            "kd_k": round(float(latest.get("STOCHk_14_3_3", float("nan"))), 2),
+            "kd_d": round(float(latest.get("STOCHd_14_3_3", float("nan"))), 2),
+            "volume_ratio": volume_ratio,
             "bias_20": _calc_bias(float(latest["Close"]), float(latest.get("SMA_20", float("nan")))),
             "bias_60": _calc_bias(float(latest["Close"]), float(latest.get("SMA_60", float("nan")))),
             "source": f"https://finance.yahoo.com/quote/{ticker_sym}/history/",

@@ -66,6 +66,92 @@ async def get_institutional_trading(symbol: str, query_date: date | None = None)
     return {"symbol": symbol, "date": base_date.isoformat(), "error": "symbol not found", "source": f"{TWSE_BASE}/rwd/zh/fund/T86"}
 
 
+_STREAK_TTL = 1800  # 30 min -- same reasoning as stock_data.py's _TECHNICAL_TTL:
+                    # institutional data is published once per trading day, no
+                    # need to re-walk several days of history every tick.
+
+
+async def get_institutional_streak(symbol: str, lookback_days: int = 10) -> dict[str, Any]:
+    """Counts consecutive most-recent trading days of positive net buying
+    for 投信 (trust) and 外資 (foreign) -- the user's own strategy notes
+    (data/knowledge_base) repeatedly key off "投信連續買超", which a single
+    day's get_institutional_trading() can't express. Walks backward day by
+    day (skipping non-trading days, which the TWSE API just returns no rows
+    for) up to lookback_days calendar days, stopping each streak count the
+    first time that institution's net for a real trading day is not
+    positive. Cached (see _STREAK_TTL) since this can be several sequential
+    HTTP calls and this project checks conditions every 60s."""
+    from datetime import timedelta
+
+    cache_key = f"chip:streak:{symbol}"
+    from src.memory.cache_store import get_cached, set_cached
+    cached = await get_cached(cache_key)
+    if cached:
+        return cached
+
+    target_code = symbol.replace(".TW", "")
+    trust_streak = 0
+    foreign_streak = 0
+    trust_counting = True
+    foreign_counting = True
+    latest_date: str | None = None
+
+    def to_int(s: str) -> int:
+        return int(s.replace(",", "").replace("+", "") or 0)
+
+    async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "Mozilla/5.0"}) as client:
+        for days_back in range(lookback_days):
+            target = date.today() - timedelta(days=days_back)
+            date_str = target.strftime("%Y%m%d")
+            url = f"{TWSE_BASE}/rwd/zh/fund/T86?date={date_str}&selectType=ALLBUT0999&response=json"
+            try:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception as exc:
+                logger.warning(f"TWSE institutional streak fetch failed ({date_str}): {exc}")
+                continue
+
+            rows = data.get("data", [])
+            if not rows:
+                continue  # not a trading day, doesn't count towards or break the streak
+
+            row = next((r for r in rows if r[0] == target_code), None)
+            if row is None:
+                continue
+
+            if latest_date is None:
+                latest_date = target.isoformat()
+            trust_net, foreign_net = to_int(row[7]), to_int(row[4])
+
+            if trust_counting:
+                trust_counting = trust_net > 0
+                trust_streak += 1 if trust_counting else 0
+            if foreign_counting:
+                foreign_counting = foreign_net > 0
+                foreign_streak += 1 if foreign_counting else 0
+
+            if not trust_counting and not foreign_counting:
+                break
+
+    if latest_date is None:
+        return {
+            "symbol": symbol, "error": "no trading data found in lookback window",
+            "source": f"{TWSE_BASE}/rwd/zh/fund/T86",
+        }
+
+    result = {
+        "symbol": symbol,
+        "latest_date": latest_date,
+        "trust_streak_days": trust_streak,
+        "foreign_streak_days": foreign_streak,
+        "source": f"{TWSE_BASE}/rwd/zh/fund/T86",
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await set_cached(cache_key, result, _STREAK_TTL)
+    return result
+
+
 # ── Goodinfo 籌碼資料（補充）────────────────────────────────────────────────────
 
 async def get_goodinfo_chip(symbol: str) -> dict[str, Any]:

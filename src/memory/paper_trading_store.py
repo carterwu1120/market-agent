@@ -209,6 +209,96 @@ async def get_watchlist() -> list[dict]:
     return await asyncio.to_thread(_get_watchlist_sync)
 
 
+# ── Conditional orders ──────────────────────────────────────────────────
+
+def _add_condition_sync(
+    symbol: str, indicator: str, operator: str, threshold: float, action: str,
+    reason: str, horizon: str, allocation_pct: float, exit_reason: str, now_ts: float,
+) -> int:
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO paper_trade_conditions
+                (symbol, indicator, operator, threshold, action, horizon,
+                 allocation_pct, exit_reason, reason, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+            """,
+            (
+                symbol, indicator, operator, threshold, action, horizon,
+                allocation_pct, exit_reason, reason, now_ts,
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def _get_active_conditions_sync() -> list[dict]:
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM paper_trade_conditions WHERE status = 'active' ORDER BY created_at ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def _set_condition_status_sync(condition_id: int, status: str, now_ts: float | None) -> bool:
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "UPDATE paper_trade_conditions SET status = ?, triggered_at = ? "
+            "WHERE id = ? AND status = 'active'",
+            (status, now_ts, condition_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+async def add_condition(
+    symbol: str, indicator: str, operator: str, threshold: float, action: str,
+    reason: str = "", horizon: str = "short_term", allocation_pct: float = 10.0,
+    exit_reason: str = "llm_signal",
+) -> int | None:
+    """Records an agent-set conditional order. Returns the new row id, or
+    None if the write failed (best-effort, never raises)."""
+    import time
+
+    try:
+        return await asyncio.to_thread(
+            _add_condition_sync, symbol, indicator, operator, threshold, action,
+            reason, horizon, allocation_pct, exit_reason, time.time(),
+        )
+    except Exception as exc:
+        logger.warning(f"paper_trade_conditions: add_condition failed for {symbol}: {exc}")
+        return None
+
+
+async def get_active_conditions() -> list[dict]:
+    return await asyncio.to_thread(_get_active_conditions_sync)
+
+
+async def mark_condition_triggered(condition_id: int) -> bool:
+    """Returns True if an active condition with this id existed and was
+    marked triggered (guards against double-firing the same condition)."""
+    import time
+
+    return await asyncio.to_thread(
+        _set_condition_status_sync, condition_id, "triggered", time.time()
+    )
+
+
+async def cancel_condition(condition_id: int) -> bool:
+    """Returns True if an active condition with this id existed and was
+    cancelled."""
+    return await asyncio.to_thread(_set_condition_status_sync, condition_id, "cancelled", None)
+
+
 async def touch_watchlist(symbols: list[str], now_ts: float) -> None:
     if symbols:
         await asyncio.to_thread(_touch_watchlist_sync, symbols, now_ts)

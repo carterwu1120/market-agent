@@ -135,9 +135,12 @@ def simulate_portfolio_equity(scored_positions: list[dict]) -> dict:
     )
     current_equity = cash + open_value
 
+    # Sort by closed_at (a real timestamp) not exit_date (day-granularity
+    # string) -- same-day closes would otherwise tie-break on insertion
+    # order rather than actual close order, scrambling the drawdown replay.
     closed = sorted(
         (p for p in scored_positions if p["status"] == "closed"),
-        key=lambda p: p.get("exit_date") or "",
+        key=lambda p: p.get("closed_at") or 0,
     )
     curve = []
     running = starting

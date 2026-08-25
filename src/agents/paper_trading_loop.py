@@ -29,6 +29,7 @@ for candidates the agent simply never acts on.
 from __future__ import annotations
 
 import asyncio
+import operator as _operator
 import time
 from datetime import datetime, timedelta, timezone
 from datetime import time as dtime
@@ -44,14 +45,35 @@ from src.llm_claude_code import ALL_TOOL_NAMES
 from src.memory.paper_trading_store import (
     add_to_watchlist,
     expire_watchlist,
+    get_active_conditions,
     get_open_positions,
     get_watchlist,
+    mark_condition_triggered,
     touch_watchlist,
 )
 from src.memory.store import init_storage
+from src.tools.chip_data import get_institutional_streak
 from src.tools.discord_tools import send_channel_message
-from src.tools.paper_trading_actions import sell
-from src.tools.stock_data import get_stock_price
+from src.tools.paper_trading_actions import buy, sell
+from src.tools.stock_data import get_stock_price, get_technical_indicators
+
+# Maps a condition's stored operator string to the comparison it performs:
+# evaluate(indicator_value, threshold). Kept alongside _check_conditions()
+# rather than in paper_trading_actions.py -- that module only validates and
+# stores the condition string, this module is the only place that actually
+# evaluates it against live data.
+_CONDITION_OPERATORS = {
+    "lt": _operator.lt,
+    "gt": _operator.gt,
+    "lte": _operator.le,
+    "gte": _operator.ge,
+}
+_CONDITION_TECHNICAL_FIELDS = (
+    "sma_5", "sma_10", "sma_20", "sma_60", "rsi_14", "macd", "macd_signal",
+    "macd_hist", "bb_upper", "bb_lower", "ema_12", "kd_k", "kd_d",
+    "volume_ratio", "bias_20", "bias_60",
+)
+_CONDITION_STREAK_FIELDS = ("trust_streak_days", "foreign_streak_days")
 
 _TW_TZ = timezone(timedelta(hours=8))
 BROAD_SCAN_INTERVAL = 40 * 60
@@ -162,6 +184,101 @@ async def _check_mechanical_stop_loss() -> None:
             )
 
 
+async def _check_conditions() -> None:
+    """Mechanical, no-LLM-call check for agent-set conditional orders (see
+    paper_trading_actions.set_condition). The agent already decided the
+    strategy when it called set_condition (which indicator, what threshold,
+    buy or sell) -- this just repeats the comparison against real fetched
+    data every tick instead of paying for a fresh run_research() call each
+    time to re-ask the same question, then executes buy()/sell() directly
+    the instant a condition is true.
+
+    A condition fires once: mark_condition_triggered() runs regardless of
+    whether the resulting trade actually succeeds, because buy()/sell()
+    already reject invalid trades (insufficient cash, position cap,
+    duplicate symbol) on their own -- retrying an already-rejected trade
+    every tick would just fail the same way forever."""
+    conditions = await get_active_conditions()
+    if not conditions:
+        return
+
+    by_symbol: dict[str, list[dict]] = {}
+    for c in conditions:
+        by_symbol.setdefault(c["symbol"], []).append(c)
+
+    for symbol, symbol_conditions in by_symbol.items():
+        indicator_values: dict[str, float] = {}
+
+        price_data = await get_stock_price(symbol)
+        if not price_data.get("error") and price_data.get("last_price"):
+            indicator_values["close"] = price_data["last_price"]
+
+        technical = await get_technical_indicators(symbol)
+        if not technical.get("error"):
+            for field in _CONDITION_TECHNICAL_FIELDS:
+                value = technical.get(field)
+                if value is not None:
+                    indicator_values[field] = value
+
+        # Only fetch the institutional streak (several sequential TWSE API
+        # calls, cached but still real network work) when a condition on
+        # this symbol actually references it -- most conditions won't.
+        if any(c["indicator"] in _CONDITION_STREAK_FIELDS for c in symbol_conditions):
+            streak = await get_institutional_streak(symbol)
+            if not streak.get("error"):
+                for field in _CONDITION_STREAK_FIELDS:
+                    value = streak.get(field)
+                    if value is not None:
+                        indicator_values[field] = value
+
+        for c in symbol_conditions:
+            value = indicator_values.get(c["indicator"])
+            if value is None:
+                continue  # couldn't fetch this indicator this tick -- try again next tick
+            if not _CONDITION_OPERATORS[c["operator"]](value, c["threshold"]):
+                continue
+
+            await mark_condition_triggered(c["id"])
+            logger.info(
+                f"paper_trading_loop: condition {c['id']} triggered for {symbol} "
+                f"({c['indicator']}={value} {c['operator']} {c['threshold']}) -> {c['action']}"
+            )
+            if c["action"] == "buy":
+                result = await buy(
+                    symbol, c["reason"] or "條件觸發", c["horizon"], c["allocation_pct"]
+                )
+            else:
+                result = await sell(symbol, c["reason"] or "條件觸發", c["exit_reason"])
+            if result.get("error"):
+                logger.warning(
+                    f"paper_trading_loop: condition {c['id']} trade failed: {result['error']}"
+                )
+
+
+async def _relevant_conditions_block(symbols: set[str]) -> str:
+    """Formats active conditions scoped to the given symbols for inclusion
+    in a review prompt, so the agent is reminded of a condition it set
+    earlier every cycle -- instead of it only resurfacing by the agent
+    happening to call paper_trade_status on its own initiative. Lets the
+    agent notice a condition no longer makes sense (e.g. new news changed
+    the setup) and cancel/replace it, rather than it silently waiting to
+    fire on stale reasoning. Returns "" when there's nothing relevant."""
+    conditions = await get_active_conditions()
+    relevant = [c for c in conditions if c["symbol"] in symbols]
+    if not relevant:
+        return ""
+    lines = [
+        f"- id={c['id']}：{c['symbol']} {c['indicator']} {c['operator']} "
+        f"{c['threshold']} → {c['action']}"
+        for c in relevant
+    ]
+    return (
+        "\n\n你之前設定、還沒觸發的條件單（如果情況已經改變、不再適用，"
+        "請呼叫 paper_trade_cancel_condition 取消，需要的話可以用 "
+        "paper_trade_set_condition 重新設定）：\n" + "\n".join(lines)
+    )
+
+
 async def _broad_scan() -> None:
     """Every BROAD_SCAN_INTERVAL: (1) discover new watchlist candidates from
     news, (2) sweep the watchlist's mechanical safety-net expiry, (3) give
@@ -207,11 +324,12 @@ async def _review_long_term_positions() -> None:
         f"- {p['symbol']}（進場 {p['entry_price']}，{p['entry_date']}，長期持有）"
         for p in long_term
     ]
+    condition_block = await _relevant_conditions_block({p["symbol"] for p in long_term})
     prompt = (
         "這是長期持有部位的例行檢視（較低頻率，每次廣掃才會問一次，不是每 5 分鐘）。"
         "請檢查以下長期部位，只有在有明確理由時才考慮賣出，否則維持長期持有的初衷，"
         "不需要因為短線波動就出場。務必實際查證真實數據後再決定。\n\n"
-        "目前長期持有部位：\n" + "\n".join(position_lines)
+        "目前長期持有部位：\n" + "\n".join(position_lines) + condition_block
     )
     try:
         result = await run_research(prompt, [], tool_names=ALL_TOOL_NAMES)
@@ -250,6 +368,9 @@ async def _tight_scan() -> None:
         f"- {p['symbol']}（進場 {p['entry_price']}，{p['entry_date']}）"
         for p in short_term_positions
     ] or ["（無）"]
+    condition_block = await _relevant_conditions_block(
+        set(due_watchlist) | {p["symbol"] for p in short_term_positions}
+    )
 
     prompt = (
         "現在是台股交易時段，這是紙上交易（模擬帳戶）短線操作的例行檢查。請檢查以下清單，"
@@ -257,7 +378,7 @@ async def _tight_scan() -> None:
         "務必實際呼叫工具查證真實數據後再決定，不要只憑下方名單文字判斷。"
         "若判斷某支股票不用再追蹤了，請呼叫 watchlist_drop 移除。\n\n"
         "觀察名單（尚未持有，值得留意的候選股）：\n" + "\n".join(watchlist_lines) + "\n\n"
-        "目前短線持有中部位：\n" + "\n".join(position_lines)
+        "目前短線持有中部位：\n" + "\n".join(position_lines) + condition_block
     )
 
     try:
@@ -300,10 +421,11 @@ async def run() -> None:
 
         now_ts = now.timestamp()
         try:
-            # Every tick, not gated by an interval -- cheap (price fetch
-            # only, no LLM call) and must not wait on the same cadence as
-            # the agentic scans it's a safety net against.
+            # Every tick, not gated by an interval -- cheap (price/technical
+            # fetch only, no LLM call) and must not wait on the same cadence
+            # as the agentic scans they stand in for or guard against.
             await _check_mechanical_stop_loss()
+            await _check_conditions()
             if now_ts - last_broad >= BROAD_SCAN_INTERVAL:
                 await _broad_scan()
                 last_broad = now_ts

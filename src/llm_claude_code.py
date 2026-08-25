@@ -37,6 +37,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # explicitly opts into ALL_TOOL_NAMES for its own automated decisions.
 _PAPER_TRADE_TOOL_NAMES = [
     "paper_trade_status", "paper_trade_buy", "paper_trade_sell", "watchlist_drop",
+    "paper_trade_set_condition", "paper_trade_cancel_condition",
 ]
 
 ALL_TOOL_NAMES = [

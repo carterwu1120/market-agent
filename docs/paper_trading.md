@@ -19,14 +19,14 @@ flowchart TD
 
     TIGHT --> REACT["react agent\n（跟 /stock 完全同一套大腦）"]
     BOT -.->|"/stock 問題也走這裡"| REACT
-    REACT -->|自主選擇要查什麼| TOOLS["MCP 工具（18 個）\ntechnical_analysis · company_announcements ·\npaper_trade_buy · paper_trade_sell · paper_trade_status · watchlist_drop · ..."]
+    REACT -->|自主選擇要查什麼| TOOLS["MCP 工具（20 個）\ntechnical_analysis · company_announcements ·\npaper_trade_buy · paper_trade_sell · paper_trade_status · watchlist_drop ·\npaper_trade_set_condition · paper_trade_cancel_condition · ..."]
 
     TOOLS --> SQLITE[("SQLite\ndata/market_agent.db")]
     BOT --> SQLITE
     SCHED --> SQLITE
 ```
 
-之後如果要正式上線自動交易，只要把 `PAPER_TRADING_ENABLED` 關掉，核心的查股票/`/brief`/`/stock` 功能完全不受影響——這是特意這樣設計的：`paper_trading_loop.py` 是獨立模組，跟 `/brief` 那條固定抓取路徑不共用 prompt、不共用觸發時機；跟 `/stock` 用的則是**同一套** react 大腦，只是多了三個工具可以用。
+之後如果要正式上線自動交易，只要把 `PAPER_TRADING_ENABLED` 關掉，核心的查股票/`/brief`/`/stock` 功能完全不受影響——這是特意這樣設計的：`paper_trading_loop.py` 是獨立模組，跟 `/brief` 那條固定抓取路徑不共用 prompt、不共用觸發時機；跟 `/stock` 用的則是**同一套** react 大腦，只是多了六個工具可以用（`paper_trade_status/buy/sell`、`watchlist_drop`、`paper_trade_set_condition/cancel_condition`）。
 
 真正要留意的 trade-off：因為現在共用同一個 process，紙上交易迴圈如果哪天真的丟出沒接住的例外把整個 process 弄掛，Discord bot 也會跟著死掉（反之亦然）。`run()` 已經把每個週期包在 try/except 裡、錯誤只會被記錄不會往外炸，風險不高，但這是唯一真的要拿來換的東西。
 
@@ -146,6 +146,26 @@ flowchart TD
 - `PAPER_TRADING_LONG_TERM_STOP_LOSS_PCT`（預設 20）——長期部位容忍更大波動，符合「長抱本來就要扛得住震盪」的邏輯
 
 只做停損，不做停利——強制在獲利時出場會截斷筆記裡「移動停利點、讓利潤奔跑」的邏輯，停利時機還是留給 agent 判斷。觸發時 `exit_reason` 會記成 `stop_loss`，理由寫「機械式停損保險觸發（非 agent 判斷）」，`/performance` 看得出這筆不是 agent 自己決定的。
+
+## 條件單——agent 決定策略，機械檢查決定時機
+
+一開始每次緊盯（每 5 分鐘）都是重新問一次 react「這支股票現在要不要買/賣」，就算 agent 已經分析過、判斷「等跌破某個價位就買」也一樣，等於同一個問題重複花錢問好幾次。
+
+現在 agent 可以呼叫 `paper_trade_set_condition` 設一筆條件單（指標、運算子、門檻、動作），之後改成 `paper_trading_loop.py` 的 `_check_conditions()` 每個 tick（60 秒，跟機械式停損同一個節奏）用真實數據機械式比對，不呼叫 LLM——條件成立的瞬間直接呼叫 `buy()`/`sell()`，不會再問 agent 一次。**跟機械式停損同一個設計語言：agent 決定策略參數，機械檢查負責重複盯著數字看。**
+
+- `indicator` 可以是：
+  - `close`（即時股價，來自 `get_stock_price`）
+  - `sma_5`／`sma_10`／`sma_20`／`sma_60`（五日/十日/月/季均線）、`rsi_14`、`macd`／`macd_signal`／`macd_hist`、`bb_upper`／`bb_lower`、`ema_12`、`kd_k`／`kd_d`（KD 指標）、`volume_ratio`（今日量 ÷ 前 5 日均量，對應筆記裡的「帶量/爆量」）、`bias_20`／`bias_60`（乖離率）——全部來自 `technical_analysis`
+  - `trust_streak_days`／`foreign_streak_days`（投信/外資連續買超天數，來自 `chip_analysis`）
+  
+  五日/十日均線、KD、量比、投信連續買超這幾個，是專門為了對應個人策略筆記（`data/knowledge_base/`）裡大量用到這些概念的判斷邏輯才加的（原本只有算 MA20/MA60，沒有 KD 也沒有量能）
+- `operator` 是 `lt`/`gt`/`lte`/`gte`（小於/大於/小於等於/大於等於）
+- `action` 是 `buy` 或 `sell`，**進場出場都能用同一套條件機制**：觀察名單的股票可以設「跌破 600 就買」（進場），已持有的部位也可以設「跌破十日線就賣」（出場，比對照筆記第 2 條的均線出場邏輯）。`buy` 用 `horizon`/`allocation_pct` 決定怎麼買，`sell` 用 `exit_reason` 決定平倉理由
+- 條件**只會觸發一次**——觸發後不管背後的 `buy()`/`sell()` 有沒有真的成功（例如現金不夠被拒絕），這筆條件都會標記為已觸發、不會每個 tick 重複嘗試，避免無限重試同一個已經失敗的交易
+- 觸發前 agent 還沒下單，這支股票理論上還在觀察名單或已經是持倉，跟平常 `paper_trade_buy`/`sell` 的前置條件一樣，只是決策時機提前設定好而已
+- 想取消還沒觸發的條件單，用 `paper_trade_cancel_condition`；`paper_trade_status` 看得到目前所有有效的條件單
+
+**條件單不是設完就沒人管了**：`_tight_scan()`/`_review_long_term_positions()` 每次組 prompt 時，會把該次審視範圍內（觀察名單、短線/長期持倉對應的股票）還沒觸發的條件單一併列出來提醒 agent（`_relevant_conditions_block()`），而不是只能靠 agent 自己想到才去呼叫 `paper_trade_status` 查。這樣如果情況已經變了（例如出現重大利空、原本設定的邏輯不再合理），agent 每輪都有機會主動判斷要不要呼叫 `paper_trade_cancel_condition` 取消、或用 `paper_trade_set_condition` 重新設定，不會變成一個設定後被遺忘、只會機械觸發的死規則。
 
 ## 目前沒做的
 

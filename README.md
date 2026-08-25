@@ -11,9 +11,9 @@
 - 📰 **即時新聞** — RSS（Bloomberg、FT、經濟日報、MoneyUDN）+ NewsAPI + GNews 多源整合，任一來源失敗不影響其他；本機 SQLite 快取 30 分鐘，重複查詢自動跳過爬蟲
 - 🏭 **類股查詢** — 輸入「半導體」「傳產」「金融股」等關鍵字，自動從 TWSE 抓取該產業所有成份股（1077 檔 / 32 產業），fallback 至代表股清單
 - 🎯 **概念股查詢** — 輸入「機器人」「元宇宙」「低軌衛星」「AI人工智慧」等主題，從 **CMoney 概念股分類**（159 個概念，涵蓋所有熱門題材）直接取得結構化個股清單；CMoney 無匹配時 fallback 至新聞關鍵字提取（鉅亨 + UDN）
-- 📈 **技術面分析** — RSI、MACD、MA20/60、EMA12、乖離率、布林帶（yfinance + pandas-ta）；本機 SQLite 快取 30 分鐘，避免重複計算 ✅
+- 📈 **技術面分析** — RSI、MACD、MA5/10/20/60、EMA12、KD、量比（5日）、乖離率、布林帶（yfinance + pandas-ta）；本機 SQLite 快取 30 分鐘，避免重複計算 ✅
 - 📊 **基本面分析** — PE、PB、EPS、ROE、分析師評等（Yahoo Finance）；本機 SQLite 快取 24 小時 ✅
-- 🧩 **籌碼面分析** — 三大法人買賣超（TWSE 公開 API）✅ | 融資融券 ⚠️ API 不穩定
+- 🧩 **籌碼面分析** — 三大法人買賣超、投信/外資連續買超天數（TWSE 公開 API）✅ | 融資融券 ⚠️ API 不穩定
 - 💬 **社群訊號** — CMoney 討論區個股貼文，摘要投資人關注議題與獨家技術亮點
 - 📚 **知識庫** — `data/knowledge_base/` 放個人技術分析筆記，daily_brief 每次直接整篇讀入 prompt 當背景知識，內容量小不需要向量搜尋
 - 💾 **頻道共用對話記憶** — SQLite session 以頻道為單位共享，每則訊息附帶 `[username]` 前綴，LLM 能辨別不同使用者的發言並判斷是否為接話；每輪回覆儲存 `conclusion`、`symbols`、`intent`，支援跨使用者的 follow-up（「那聯發科呢？」即使是不同人問也能繼承話題）
@@ -45,7 +45,7 @@ flowchart TD
     CLS -->|daily_brief| DB
 
     subgraph RA["run_research()（Claude Code 原生 ReAct）"]
-        LLM_R["Claude Code 自主決定\n呼叫哪些 MCP 工具"] -->|tool_calls| MCP["src/mcp_server.py\n18 種工具（含紙上交易）"]
+        LLM_R["Claude Code 自主決定\n呼叫哪些 MCP 工具"] -->|tool_calls| MCP["src/mcp_server.py\n20 種工具（含紙上交易）"]
         MCP -->|工具結果| LLM_R
     end
 
@@ -95,8 +95,10 @@ flowchart TD
 | `paper_trade_buy(symbol, reason, horizon, allocation_pct)` | 開一筆紙上交易買進部位，價格用即時真實股價，horizon 選短線/長期，allocation_pct 為押多少 % 模擬本金（agent 自訂，系統夾在允許範圍內） |
 | `paper_trade_sell(symbol, reason, exit_reason)` | 對持有部位平倉，價格用即時真實股價 |
 | `watchlist_drop(symbol, reason)` | 把股票從觀察名單移除，agent 自行判斷不用再追蹤 |
+| `paper_trade_set_condition(symbol, indicator, operator, threshold, action, ...)` | 設定條件單，系統每 tick 機械式檢查真實數據，成立就直接執行買/賣，不用再花一次 LLM 呼叫確認 |
+| `paper_trade_cancel_condition(condition_id)` | 取消一筆還沒觸發的條件單 |
 
-> 完整清單（含 Discord/Gmail 訊息工具，共 18 個）見 [`src/mcp_server.py`](src/mcp_server.py)。紙上交易的完整運作方式（背景迴圈、廣掃/緊盯頻率、架構圖）見 [`docs/paper_trading.md`](docs/paper_trading.md)。
+> 完整清單（含 Discord/Gmail 訊息工具，共 20 個）見 [`src/mcp_server.py`](src/mcp_server.py)。紙上交易的完整運作方式（背景迴圈、廣掃/緊盯頻率、架構圖）見 [`docs/paper_trading.md`](docs/paper_trading.md)。
 
 ---
 
@@ -203,7 +205,7 @@ uv run python -m src.cli
 | 用途 | 函數 | 機制 | 使用位置 |
 |------|------|------|---------|
 | 單次分類/擷取/報告生成（無工具） | `claude_code_chat()` | `claude -p --tools ""`，純文字 in/out | pipeline（intent 分類）、market_agent（熱門股擷取）、synthesizer（報告生成）|
-| 需要即時查資料的 ReAct 迴圈 | `claude_code_research()` | `claude -p --mcp-config`，Claude Code 用原生 MCP tool-calling 呼叫 [`src/mcp_server.py`](src/mcp_server.py) 暴露的 18 個工具 | research_agent、paper_trading_loop |
+| 需要即時查資料的 ReAct 迴圈 | `claude_code_research()` | `claude -p --mcp-config`，Claude Code 用原生 MCP tool-calling 呼叫 [`src/mcp_server.py`](src/mcp_server.py) 暴露的 20 個工具 | research_agent、paper_trading_loop |
 
 > **為什麼分兩種**：早期曾嘗試用純文字 prompt 要求 `claude -p` 輸出 `{"action": "...", "args": {...}}` 這種自訂 JSON 協議來模擬 tool-calling，實測約 30–40% 時候會失敗——`claude -p` 背後是完整的 agent runtime，不是單純的文字補全 API，遇到「不確定工具是否真的存在」的情境會自行幻想/扮演整個工具呼叫與回傳結果。改用真正的 MCP tool-calling 後，這個失敗模式完全消失（測試中連續 10/10 次正確執行，含多工具串接）。單次分類這類「不需要工具」的呼叫則沒有這個問題，維持純文字 `claude -p` 即可穩定運作。
 
@@ -222,7 +224,7 @@ market-agent/
     ├── main.py                  # 啟動入口
     ├── config.py                # 所有設定（pydantic-settings）
     ├── llm_claude_code.py       # Claude Code CLI 後端（claude_code_chat / claude_code_research）
-    ├── mcp_server.py            # MCP server：暴露 18 個工具給 claude -p --mcp-config 呼叫
+    ├── mcp_server.py            # MCP server：暴露 20 個工具給 claude -p --mcp-config 呼叫
     ├── agents/
     │   ├── pipeline.py          # ★ intent 分類 + run_agent() 對外入口
     │   ├── daily_brief.py       # daily_brief 固定平行抓取流程

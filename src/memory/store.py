@@ -119,6 +119,33 @@ CREATE TABLE IF NOT EXISTS paper_watchlist (
     last_checked REAL NOT NULL DEFAULT 0,
     reason TEXT NOT NULL DEFAULT ''
 );
+
+-- Agent-set conditional orders: the agent analyzes a symbol once and picks
+-- an indicator/threshold ("buy if close < 550", "sell if rsi_14 > 70")
+-- instead of paying for a fresh run_research() call every tight-scan cycle
+-- just to re-ask the same question. paper_trading_loop.py's
+-- _check_conditions() evaluates these every tick against real fetched
+-- data (no LLM call) and executes buy()/sell() directly the moment one
+-- triggers -- the agent still decided the indicator/threshold/action, the
+-- mechanical part is only "keep checking until it's true".
+CREATE TABLE IF NOT EXISTS paper_trade_conditions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    indicator TEXT NOT NULL,       -- close | sma_20 | sma_60 | rsi_14 | macd | macd_signal |
+                                    -- macd_hist | bb_upper | bb_lower | ema_12 | bias_20 | bias_60
+    operator TEXT NOT NULL,        -- lt | gt | lte | gte
+    threshold REAL NOT NULL,
+    action TEXT NOT NULL,          -- buy | sell
+    horizon TEXT NOT NULL DEFAULT 'short_term',      -- used when action = buy
+    allocation_pct REAL NOT NULL DEFAULT 10.0,       -- used when action = buy
+    exit_reason TEXT NOT NULL DEFAULT 'llm_signal',  -- used when action = sell
+    reason TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',  -- active | triggered | cancelled
+    created_at REAL NOT NULL,
+    triggered_at REAL
+);
+
+CREATE INDEX IF NOT EXISTS ix_paper_conditions_status ON paper_trade_conditions (status);
 """
 
 

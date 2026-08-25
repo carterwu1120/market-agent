@@ -16,7 +16,11 @@ from loguru import logger
 from mcp.server.mcpserver import MCPServer
 
 from src.tools import paper_trading_actions
-from src.tools.chip_data import get_institutional_trading, get_margin_trading
+from src.tools.chip_data import (
+    get_institutional_streak,
+    get_institutional_trading,
+    get_margin_trading,
+)
 from src.tools.company_insight import get_company_insights
 from src.tools.discord_tools import send_channel_message
 from src.tools.discord_tools import send_dm as _discord_send_dm
@@ -71,7 +75,8 @@ async def theme_lookup(keyword: str) -> str:
 
 @mcp.tool()
 async def technical_analysis(symbol: str) -> str:
-    """查詢個股技術面指標：現價、RSI、MACD、均線、乖離率、布林帶。symbol 格式：2330.TW"""
+    """查詢個股技術面指標：現價、RSI、MACD、均線(5/10/20/60日)、KD、量比、乖離率、布林帶。
+    symbol 格式：2330.TW"""
     ind, price = await asyncio.gather(
         get_technical_indicators(symbol),
         get_stock_price(symbol),
@@ -89,7 +94,10 @@ async def technical_analysis(symbol: str) -> str:
         }]))
     return (
         f"{symbol} | 現價: {ind.get('close')} | RSI: {ind.get('rsi_14')} | "
-        f"MACD: {ind.get('macd')} | MA20: {ind.get('sma_20')} | MA60: {ind.get('sma_60')} | "
+        f"MACD: {ind.get('macd')} | "
+        f"MA5: {ind.get('sma_5')} | MA10: {ind.get('sma_10')} | "
+        f"MA20: {ind.get('sma_20')} | MA60: {ind.get('sma_60')} | "
+        f"KD(K/D): {ind.get('kd_k')}/{ind.get('kd_d')} | 量比(5日): {ind.get('volume_ratio')} | "
         f"乖離率(20): {ind.get('bias_20')}% | 乖離率(60): {ind.get('bias_60')}% | "
         f"布林上軌: {ind.get('bb_upper')} | 下軌: {ind.get('bb_lower')}"
     )
@@ -127,10 +135,12 @@ async def company_news(symbol: str) -> str:
 
 @mcp.tool()
 async def chip_analysis(symbol: str) -> str:
-    """查詢個股即時籌碼面：三大法人買賣超（外資/投信/自營商）、融資融券餘額。symbol 格式：2330.TW"""
-    inst, margin = await asyncio.gather(
+    """查詢個股即時籌碼面：三大法人買賣超（外資/投信/自營商）、投信/外資連續買超天數、
+    融資融券餘額。symbol 格式：2330.TW"""
+    inst, margin, streak = await asyncio.gather(
         get_institutional_trading(symbol),
         get_margin_trading(symbol),
+        get_institutional_streak(symbol),
         return_exceptions=True,
     )
     inst_ok = not isinstance(inst, Exception) and not (isinstance(inst, dict) and inst.get("error"))
@@ -159,6 +169,14 @@ async def chip_analysis(symbol: str) -> str:
         parts.append(
             f"  融資餘額:{margin.get('margin_buy_balance')} "
             f"融券餘額:{margin.get('short_sell_balance')}"
+        )
+    streak_ok = not isinstance(streak, Exception) and not (
+        isinstance(streak, dict) and streak.get("error")
+    )
+    if streak_ok:
+        parts.append(
+            f"  投信連續買超:{streak.get('trust_streak_days')}天 "
+            f"外資連續買超:{streak.get('foreign_streak_days')}天"
         )
     return "\n".join(parts)
 
@@ -284,16 +302,17 @@ async def gmail_send(to: str, subject: str, body: str) -> str:
 @mcp.tool()
 async def paper_trade_status() -> str:
     """查詢目前紙上交易的持倉狀況：有哪些部位持有中（含浮動損益、短線/長期分類）、
-    最近平倉的紀錄，以及模擬帳戶目前的可用現金（下單前用這個確認額度夠不夠）。"""
+    最近平倉的紀錄、目前還有效的條件單（見 paper_trade_set_condition），
+    以及模擬帳戶目前的可用現金（下單前用這個確認額度夠不夠）。"""
     result = await paper_trading_actions.get_status()
     eq = result["equity"]
     equity_line = (
         f"[模擬帳戶] 可用現金 {eq['current_cash']:.0f} / 起始本金 {eq['starting_capital']:.0f}，"
         f"目前總資產 {eq['current_equity']:.0f}（累計報酬 {eq['total_return_pct']}%）"
     )
-    if not result["positions"]:
-        return f"目前沒有任何紙上交易部位\n{equity_line}"
     lines = []
+    if not result["positions"]:
+        lines.append("目前沒有任何紙上交易部位")
     for p in result["positions"]:
         horizon_label = "長期持有" if p.get("horizon") == "long_term" else "短線操作"
         if p["status"] == "open":
@@ -308,6 +327,13 @@ async def paper_trade_status() -> str:
                 f"（{p['exit_reason']}），實現損益 {p['pnl_pct']}%"
             )
     lines.append(equity_line)
+    if result["conditions"]:
+        lines.append("[有效條件單]")
+        for c in result["conditions"]:
+            lines.append(
+                f"id={c['id']}：{c['symbol']} {c['indicator']} {c['operator']} "
+                f"{c['threshold']} → {c['action']}"
+            )
     return "\n".join(lines)
 
 
@@ -358,6 +384,52 @@ async def watchlist_drop(symbol: str, reason: str) -> str:
     if result.get("error"):
         return result["error"]
     return f"已將 {result['symbol']} 從觀察名單移除"
+
+
+@mcp.tool()
+async def paper_trade_set_condition(
+    symbol: str,
+    indicator: str,
+    operator: str,
+    threshold: float,
+    action: str,
+    reason: str = "",
+    horizon: str = "short_term",
+    allocation_pct: float = 10.0,
+    exit_reason: str = "llm_signal",
+) -> str:
+    """設定一筆條件單：系統會每分鐘自動用真實數據檢查這個條件，一旦成立就直接
+    執行 paper_trade_buy 或 paper_trade_sell，不會再另外問你一次。適合你已經分析
+    過一支股票、只是在等特定價位或指標出現的情況，不用每輪緊盯都重新問一次。
+
+    indicator 只能是：close（即時股價）、sma_20、sma_60、rsi_14、macd、
+    macd_signal、macd_hist、bb_upper、bb_lower、ema_12、bias_20、bias_60
+    （跟 technical_analysis 回傳的欄位一致）。
+    operator 只能是：lt（小於）、gt（大於）、lte（小於等於）、gte（大於等於）。
+    action 只能是 buy 或 sell。action=buy 時 horizon/allocation_pct 才有意義
+    （用法同 paper_trade_buy）；action=sell 時 exit_reason 才有意義
+    （用法同 paper_trade_sell）。
+    條件成立後只會觸發一次，不會重複觸發；若之後想取消，用
+    paper_trade_cancel_condition。"""
+    result = await paper_trading_actions.set_condition(
+        symbol, indicator, operator, threshold, action, reason, horizon,
+        allocation_pct, exit_reason,
+    )
+    if result.get("error"):
+        return result["error"]
+    return (
+        f"已設定條件單 id={result['condition_id']}："
+        f"{symbol} {indicator} {operator} {threshold} → {action}"
+    )
+
+
+@mcp.tool()
+async def paper_trade_cancel_condition(condition_id: int) -> str:
+    """取消一筆還沒觸發的條件單（用 paper_trade_status 查詢目前有效的條件單 id）。"""
+    result = await paper_trading_actions.cancel_watch_condition(condition_id)
+    if result.get("error"):
+        return result["error"]
+    return f"已取消條件單 id={result['condition_id']}"
 
 
 def _init_storage_before_serving() -> None:
