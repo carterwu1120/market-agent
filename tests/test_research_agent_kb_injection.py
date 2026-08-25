@@ -11,20 +11,20 @@ defeats the entire point of having this file.)
 import pytest
 
 from src.agents import research_agent
-from src.llm_claude_code import ALL_TOOL_NAMES, USER_FACING_TOOL_NAMES
+from src.llm import ALL_TOOL_NAMES, USER_FACING_TOOL_NAMES
 
 
 @pytest.fixture(autouse=True)
 def _capture_system_prompt(monkeypatch):
-    """claude_code_research's first positional arg is the fully-assembled
-    system prompt -- capture it instead of hitting the real claude -p CLI."""
+    """llm_research's first positional arg is the fully-assembled system
+    prompt -- capture it instead of hitting a real LLM CLI."""
     captured = {}
 
     async def fake_claude_code_research(system, history, user_message, tool_names):
         captured["system"] = system
         return {"result": "CONCLUSION_SUMMARY: ok END_CONCLUSION", "cost_usd": 0.0}
 
-    monkeypatch.setattr(research_agent, "claude_code_research", fake_claude_code_research)
+    monkeypatch.setattr(research_agent, "llm_research", fake_claude_code_research)
     monkeypatch.setattr(
         research_agent, "read_knowledge_base", lambda: "【測試筆記內容】均線黃金交叉"
     )

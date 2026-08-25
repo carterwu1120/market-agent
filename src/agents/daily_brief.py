@@ -1,7 +1,7 @@
 """Deterministic daily market brief.
 
 Fetches every data source directly in plain async code (no LLM decides what to
-fetch), then makes one claude_code_chat() call to write the report. Runs
+fetch), then makes one llm_chat() call to write the report. Runs
 unattended on a schedule (08:30/12:00/14:30) plus /brief, so it must never
 silently skip a source the way an LLM-driven tool-calling loop could —
 see docs/adr/0001-drop-langgraph-delegate-to-claude-code.md.

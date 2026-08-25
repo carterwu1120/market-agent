@@ -15,7 +15,7 @@ from loguru import logger
 
 from src.agents.daily_brief import run_daily_brief
 from src.agents.research_agent import run_research
-from src.llm_claude_code import claude_code_chat
+from src.llm import llm_chat
 
 _BRIEF_KEYWORDS = ["早安", "盤前", "今日總結", "市場摘要", "每日簡報", "今天市場概況", "大盤今天"]
 _TOPIC_KEYWORDS = ["半導體", "金融", "航運", "鋼鐵", "生技", "AI", "機器人", "電動車", "題材", "概念", "類股", "產業"]
@@ -42,7 +42,7 @@ async def classify_intent(user_message: str) -> str:
         return "daily_brief"
 
     try:
-        raw = await claude_code_chat(
+        raw = await llm_chat(
             messages=[{"role": "user", "content": user_message}],
             system=INTENT_SYSTEM,
         )

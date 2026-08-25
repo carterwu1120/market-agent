@@ -21,6 +21,13 @@ class Settings(BaseSettings):
     # If empty, bot responds everywhere
     allowed_channel_ids: str = ""
 
+    # LLM CLI backend. Both CLIs use the user's existing local login; no API
+    # key is read by this application. Leave codex_model empty to use the
+    # model selected by Codex's own configuration.
+    llm_backend: Literal["claude", "codex"] = "claude"
+    codex_model: str = ""
+    codex_reasoning_effort: Literal["low", "medium", "high", "xhigh"] = "medium"
+
     @property
     def allowed_channels(self) -> set[str]:
         if not self.allowed_channel_ids:

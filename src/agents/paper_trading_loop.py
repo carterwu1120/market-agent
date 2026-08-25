@@ -41,7 +41,7 @@ from src.agents.market_agent import _extract_hot_stocks
 from src.agents.paper_trading import calc_pnl_pct
 from src.agents.research_agent import run_research
 from src.config import settings
-from src.llm_claude_code import ALL_TOOL_NAMES
+from src.llm import ALL_TOOL_NAMES
 from src.memory.paper_trading_store import (
     add_to_watchlist,
     expire_watchlist,

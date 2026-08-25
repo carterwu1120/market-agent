@@ -11,6 +11,7 @@ registration mechanism (LangChain @tool -> MCP @mcp.tool) differs.
 from __future__ import annotations
 
 import asyncio
+import os
 
 from loguru import logger
 from mcp.server.mcpserver import MCPServer
@@ -34,6 +35,19 @@ from src.tools.web_search import search_web
 
 mcp = MCPServer("market-agent-tools")
 
+_allowed_raw = os.getenv("MARKET_AGENT_MCP_ALLOWED_TOOLS", "")
+_ALLOWED_TOOLS = {name for name in _allowed_raw.split(",") if name}
+
+
+def _tool(name: str):
+    """Register a tool unless this subprocess was started with a whitelist."""
+    def decorator(func):
+        if not _ALLOWED_TOOLS or name in _ALLOWED_TOOLS:
+            return mcp.tool()(func)
+        return func
+
+    return decorator
+
 
 def _fire_and_forget(coro) -> None:
     """asyncio.ensure_future without an awaiter drops exceptions as silent
@@ -51,7 +65,7 @@ def _fire_and_forget(coro) -> None:
 
 # ── 資料查詢 ──────────────────────────────────────────────────────────────
 
-@mcp.tool()
+@_tool("sector_lookup")
 async def sector_lookup(keyword: str) -> str:
     """查詢 TWSE 官方產業類股的成份股。適用於半導體、航運、金融、鋼鐵等官方產業關鍵字。"""
     result = await get_sector_symbols(keyword, max_symbols=8)
@@ -62,7 +76,7 @@ async def sector_lookup(keyword: str) -> str:
     return f"產業：{', '.join(names)} | 代表股：{', '.join(symbols)}"
 
 
-@mcp.tool()
+@_tool("theme_lookup")
 async def theme_lookup(keyword: str) -> str:
     """查詢市場主題/概念股。適用於機器人、元宇宙、低軌衛星、AI、電動車等題材關鍵字。"""
     result = await search_theme_stocks(keyword, max_symbols=8)
@@ -73,7 +87,7 @@ async def theme_lookup(keyword: str) -> str:
     return f"概念：{matched} | 個股：{', '.join(symbols)}"
 
 
-@mcp.tool()
+@_tool("technical_analysis")
 async def technical_analysis(symbol: str) -> str:
     """查詢個股技術面指標：現價、RSI、MACD、均線(5/10/20/60日)、KD、量比、乖離率、布林帶。
     symbol 格式：2330.TW"""
@@ -103,7 +117,7 @@ async def technical_analysis(symbol: str) -> str:
     )
 
 
-@mcp.tool()
+@_tool("fundamental_analysis")
 async def fundamental_analysis(symbol: str) -> str:
     """查詢個股基本面：本益比、股價淨值比、EPS、ROE、營收成長、分析師評等。symbol 格式：2330.TW"""
     data = await get_fundamental_data(symbol)
@@ -120,7 +134,7 @@ async def fundamental_analysis(symbol: str) -> str:
     )
 
 
-@mcp.tool()
+@_tool("company_news")
 async def company_news(symbol: str) -> str:
     """查詢個股法說會、技術突破、產品新聞。symbol 格式：2330.TW"""
     result = await get_company_insights(symbol, max_articles=5)
@@ -133,7 +147,7 @@ async def company_news(symbol: str) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@_tool("chip_analysis")
 async def chip_analysis(symbol: str) -> str:
     """查詢個股即時籌碼面：三大法人買賣超（外資/投信/自營商）、投信/外資連續買超天數、
     融資融券餘額。symbol 格式：2330.TW"""
@@ -181,7 +195,7 @@ async def chip_analysis(symbol: str) -> str:
     return "\n".join(parts)
 
 
-@mcp.tool()
+@_tool("stock_history")
 async def stock_history(symbol: str, days: int = 7) -> str:
     """查詢個股歷史快照（收盤價/均線/法人動向），資料來自本系統每日儲存的 DB 記錄。
     若 DB 無資料，說明原因。symbol 格式：2330.TW"""
@@ -205,7 +219,7 @@ async def stock_history(symbol: str, days: int = 7) -> str:
 
 # ── 開放搜尋／官方揭露 ────────────────────────────────────────────────────
 
-@mcp.tool()
+@_tool("web_search")
 async def web_search(query: str, max_results: int = 5) -> str:
     """開放網頁搜尋（DuckDuckGo），自己下關鍵字查詢固定 API 沒有涵蓋的資訊（新聞事件、市場氛圍等）。
     嚴禁把搜尋結果當成股價/財報/籌碼等數字的來源——這類數字一律要用 technical_analysis、
@@ -219,7 +233,7 @@ async def web_search(query: str, max_results: int = 5) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@_tool("company_announcements")
 async def company_announcements(symbol: str) -> str:
     """查詢公司「今天」的重大訊息公告（TWSE 官方 MOPS 資料）。只有今天，沒有歷史。symbol 格式：2330.TW"""
     result = await get_material_info(symbol)
@@ -234,7 +248,7 @@ async def company_announcements(symbol: str) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@_tool("company_financial_summary")
 async def company_financial_summary(symbol: str) -> str:
     """查詢公司「最新一期」公開財報摘要（TWSE 官方 MOPS 綜合損益表）。只有最新一季，沒有歷史。symbol 格式：2330.TW"""
     result = await get_financial_summary(symbol)
@@ -252,7 +266,7 @@ async def company_financial_summary(symbol: str) -> str:
 
 # ── 訊息發送 ──────────────────────────────────────────────────────────────
 
-@mcp.tool()
+@_tool("discord_message")
 async def discord_message(channel_id: str, message: str, mention_user_ids: str = "") -> str:
     """傳訊息到 Discord 頻道。channel_id 為頻道 ID（數字）。mention_user_ids 用逗號分隔多個 Discord user ID，留空則不 @。"""
     mentions = [uid.strip() for uid in mention_user_ids.split(",") if uid.strip()]
@@ -262,7 +276,7 @@ async def discord_message(channel_id: str, message: str, mention_user_ids: str =
     return f"訊息已傳送至頻道 {channel_id}（message_id: {result.get('message_id')}）"
 
 
-@mcp.tool()
+@_tool("discord_dm")
 async def discord_dm(user_id: str, message: str) -> str:
     """私訊 Discord 用戶。user_id 填對方的 Discord user ID；若要私訊主人（bot 擁有者），填 'owner'。"""
     result = await _discord_send_dm(user_id, message)
@@ -271,7 +285,7 @@ async def discord_dm(user_id: str, message: str) -> str:
     return f"私訊已送出（user_id: {result.get('user_id')}，message_id: {result.get('message_id')}）"
 
 
-@mcp.tool()
+@_tool("gmail_draft")
 async def gmail_draft(to: str, subject: str, body: str) -> str:
     """建立 Gmail 草稿。回傳草稿內容供用戶確認，確認後再呼叫 gmail_send 寄出。
     to: 收件人 email。subject: 主旨。body: 信件內文。"""
@@ -285,7 +299,7 @@ async def gmail_draft(to: str, subject: str, body: str) -> str:
     )
 
 
-@mcp.tool()
+@_tool("gmail_send")
 async def gmail_send(to: str, subject: str, body: str) -> str:
     """直接寄送 Email。通常在用戶確認草稿後才呼叫。
     to: 收件人 email。subject: 主旨。body: 信件內文。"""
@@ -299,7 +313,7 @@ async def gmail_send(to: str, subject: str, body: str) -> str:
 # 邏輯本體在 src/tools/paper_trading_actions.py（同其他工具的慣例）；
 # 進出場價格一律由那裡即時查真實股價，不接受 LLM 自行指定價格數字。
 
-@mcp.tool()
+@_tool("paper_trade_status")
 async def paper_trade_status() -> str:
     """查詢目前紙上交易的持倉狀況：有哪些部位持有中（含浮動損益、短線/長期分類）、
     最近平倉的紀錄、目前還有效的條件單（見 paper_trade_set_condition），
@@ -337,7 +351,7 @@ async def paper_trade_status() -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@_tool("paper_trade_buy")
 async def paper_trade_buy(
     symbol: str, reason: str, horizon: str = "short_term", allocation_pct: float = 10.0
 ) -> str:
@@ -360,7 +374,7 @@ async def paper_trade_buy(
     )
 
 
-@mcp.tool()
+@_tool("paper_trade_sell")
 async def paper_trade_sell(symbol: str, reason: str, exit_reason: str = "llm_signal") -> str:
     """對指定股票持有中的部位平倉（模擬，非真實下單）。
     exit_reason 只能是 take_profit（停利）、stop_loss（停損）、llm_signal（其他判斷）三選一。
@@ -374,7 +388,7 @@ async def paper_trade_sell(symbol: str, reason: str, exit_reason: str = "llm_sig
     )
 
 
-@mcp.tool()
+@_tool("watchlist_drop")
 async def watchlist_drop(symbol: str, reason: str) -> str:
     """把指定股票從觀察名單移除，代表你判斷這支不用再繼續追蹤了
     （不論是決定不交易它，還是已經透過 paper_trade_buy 處理完畢）。
@@ -386,7 +400,7 @@ async def watchlist_drop(symbol: str, reason: str) -> str:
     return f"已將 {result['symbol']} 從觀察名單移除"
 
 
-@mcp.tool()
+@_tool("paper_trade_set_condition")
 async def paper_trade_set_condition(
     symbol: str,
     indicator: str,
@@ -423,7 +437,7 @@ async def paper_trade_set_condition(
     )
 
 
-@mcp.tool()
+@_tool("paper_trade_cancel_condition")
 async def paper_trade_cancel_condition(condition_id: int) -> str:
     """取消一筆還沒觸發的條件單（用 paper_trade_status 查詢目前有效的條件單 id）。"""
     result = await paper_trading_actions.cancel_watch_condition(condition_id)

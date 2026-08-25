@@ -33,6 +33,7 @@ from rich.table import Table
 
 from src.agents.pipeline import run_agent
 from src.bot.scheduler import SLOT_PROMPTS
+from src.config import settings
 
 _TW_TZ = timezone(timedelta(hours=8))
 
@@ -266,7 +267,7 @@ async def _main_async() -> None:
 
     console.print(Panel(
         "[bold green]Market Agent CLI[/bold green]\n"
-        "LLM: [cyan]claude_code[/cyan]\n"
+        f"LLM: [cyan]{settings.llm_backend}[/cyan]\n"
         "輸入 [bold]/help[/bold] 查看指令，[bold]/quit[/bold] 離開",
         border_style="green",
     ))

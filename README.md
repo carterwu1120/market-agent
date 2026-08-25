@@ -21,7 +21,7 @@
 - 📣 **法說會與技術新聞** — 鉅亨網個股搜尋，優先抓法說會、技術突破、產品相關報導，作為「獨家技術亮點」段落的唯一來源
 - ⏰ **定時排程報告** — 每日自動在 08:30（盤前）、12:00（盤中）、14:30（收盤後）發送市場報告至指定 Discord 頻道；設定 `SCHEDULE_REPORT_CHANNEL_ID` 即可啟用，無需手動觸發
 - 🧪 **紙上交易迴圈**（實驗性）— 交易時間內背景自動運作，抓新聞找候選股、交給 react agent 自主查證後判斷買賣，用真實股價記錄進/出場；模擬帳戶有起始本金與部位大小（`allocation_pct`，agent 自訂）、機械式停損跟持倉上限當失控保險、agent 可設條件單讓機械檢查每分鐘比對真實數據自動觸發買賣（不用每輪都重新問一次 LLM）；`/performance`、`/watchlist`（Discord）或 `/status`（終端，見下方本地 CLI 測試）隨時查狀態；`PAPER_TRADING_ENABLED` 開關控制要不要啟動，不影響核心功能，完整設計細節見 [`docs/paper_trading.md`](docs/paper_trading.md)
-- 🤖 **LLM 後端** — **Claude Code CLI**（`claude -p`，不需 API key，算在 Claude Code 訂閱額度內）
+- 🤖 **LLM 後端** — 可切換 **Claude Code CLI** 或 **Codex CLI**，使用各 CLI 的本機登入
 
 ---
 
@@ -107,7 +107,7 @@ flowchart TD
 ### 前置需求
 
 - Discord Bot Token（[Developer Portal](https://discord.com/developers/applications) 建立）
-- [Claude Code CLI](https://docs.claude.com/claude-code) 已安裝並登入（`claude` 指令可用），且 Claude Code 訂閱有效 —— 所有 LLM 呼叫都靠它，沒有雲端 API key 備援
+- 已安裝並登入所選後端：Claude Code CLI（`claude`）或 Codex CLI（`codex`）
 - [uv](https://docs.astral.sh/uv/)（Python 套件管理與執行）
 
 ### 1. 設定環境變數
@@ -202,14 +202,22 @@ uv run python -m src.cli
 
 ## LLM 後端
 
-全部走本機 **Claude Code CLI**（`claude -p`），計入 Claude Code 訂閱額度，不需要任何雲端 API key，也沒有其他後端可切換。需求：本機已安裝並登入 `claude`。
+透過 `.env` 的 `LLM_BACKEND=claude|codex` 選擇本機 CLI。預設維持 Claude；切換 Codex 時可另外設定 `CODEX_MODEL` 與 `CODEX_REASONING_EFFORT`。兩種後端都使用 CLI 已登入的帳號，本專案不保存 API key。
+
+```env
+LLM_BACKEND=codex
+CODEX_MODEL=                    # 留空使用 Codex 本機預設
+CODEX_REASONING_EFFORT=medium
+```
 
 ### 兩種呼叫形狀
 
 | 用途 | 函數 | 機制 | 使用位置 |
 |------|------|------|---------|
-| 單次分類/擷取/報告生成（無工具） | `claude_code_chat()` | `claude -p --tools ""`，純文字 in/out | pipeline（intent 分類）、market_agent（熱門股擷取）、synthesizer（報告生成）|
-| 需要即時查資料的 ReAct 迴圈 | `claude_code_research()` | `claude -p --mcp-config`，Claude Code 用原生 MCP tool-calling 呼叫 [`src/mcp_server.py`](src/mcp_server.py) 暴露的 20 個工具 | research_agent、paper_trading_loop |
+| 單次分類/擷取/報告生成（無工具） | `llm_chat()` | 由 facade 路由至所選 CLI | pipeline（intent 分類）、market_agent（熱門股擷取）、synthesizer（報告生成）|
+| 需要即時查資料的 ReAct 迴圈 | `llm_research()` | 將 [`src/mcp_server.py`](src/mcp_server.py) 設為 MCP server，交給所選 CLI 執行 | research_agent、paper_trading_loop |
+
+> Claude CLI 會提供 `total_cost_usd`，可納入紙上交易的每日美元預算。Codex CLI 目前沒有等價的美元成本輸出，因此使用 Codex 時 `PAPER_TRADING_DAILY_BUDGET_USD` 無法統計 Codex 呼叫成本，程式會寫入警告而不會虛構金額。
 
 > **為什麼分兩種**：早期曾嘗試用純文字 prompt 要求 `claude -p` 輸出 `{"action": "...", "args": {...}}` 這種自訂 JSON 協議來模擬 tool-calling，實測約 30–40% 時候會失敗——`claude -p` 背後是完整的 agent runtime，不是單純的文字補全 API，遇到「不確定工具是否真的存在」的情境會自行幻想/扮演整個工具呼叫與回傳結果。改用真正的 MCP tool-calling 後，這個失敗模式完全消失（測試中連續 10/10 次正確執行，含多工具串接）。單次分類這類「不需要工具」的呼叫則沒有這個問題，維持純文字 `claude -p` 即可穩定運作。
 

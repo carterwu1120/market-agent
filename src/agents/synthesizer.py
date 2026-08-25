@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from loguru import logger
 
 from src.agents.report_utils import extract_conclusion
-from src.llm_claude_code import claude_code_chat
+from src.llm import llm_chat
 
 _TW_TZ = timezone(timedelta(hours=8))
 
@@ -399,7 +399,7 @@ async def write_weekend_digest(
             news_count=shown_count,
             news_summary=_safe(_summarize_news(news_articles, max_items=max_items)),
         )
-        llm_analysis = await claude_code_chat(
+        llm_analysis = await llm_chat(
             messages=[{"role": "user", "content": prompt}],
             system=WEEKEND_DIGEST_SYSTEM,
         )
@@ -468,7 +468,7 @@ async def write_report(
             social_summary=_safe(_summarize_social(social_signals)),
             rag_context=_safe(rag_text),
         )
-        llm_analysis = await claude_code_chat(
+        llm_analysis = await llm_chat(
             messages=[{"role": "user", "content": prompt}],
             system=SYNTHESIS_SYSTEM,
         )

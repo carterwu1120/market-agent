@@ -10,7 +10,7 @@ from dataclasses import asdict
 
 from loguru import logger
 
-from src.llm_claude_code import claude_code_chat
+from src.llm import llm_chat
 
 _EXTRACT_SYSTEM = """你是台股選股助理。從候選個股清單中，挑出今日新聞最熱門的台灣上市/上櫃個股。
 
@@ -148,7 +148,7 @@ async def _extract_hot_stocks(news_articles: list[dict]) -> list[str]:
         f"今日新聞標題：\n{titles}"
     )
     try:
-        raw = await claude_code_chat(
+        raw = await llm_chat(
             messages=[{"role": "user", "content": user_content}],
             system=_EXTRACT_SYSTEM,
         )

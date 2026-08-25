@@ -1,12 +1,12 @@
-"""Research Agent — hands off to Claude Code's native ReAct loop for complex/comparative queries.
+"""Research Agent — hands off to the selected CLI's native ReAct loop.
 
 適合處理開放式問題，例如：
 - 「比較半導體和航運哪個現在更值得投資？」
 - 「幫我找機器人題材中技術面最強的股票」
 - 「今天哪個類股表現最好？」
 
-實際的工具呼叫迴圈由 `claude -p --mcp-config` 執行（見 src/mcp_server.py 暴露的工具），
-這裡只負責組裝對話歷史、呼叫 claude_code_research，並從結果中解析出用到的股票代號。
+實際的工具呼叫迴圈由 Claude Code 或 Codex 執行（見 src/mcp_server.py 暴露的工具），
+這裡只負責組裝對話歷史、呼叫 llm_research，並從結果中解析出用到的股票代號。
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import re
 from loguru import logger
 
 from src.agents.report_utils import extract_conclusion
-from src.llm_claude_code import USER_FACING_TOOL_NAMES, claude_code_research
+from src.llm import USER_FACING_TOOL_NAMES, llm_research
 from src.tools.knowledge_base import read_knowledge_base
 from src.tools.news_fetcher import _TICKER_NAMES
 
@@ -147,7 +147,7 @@ async def run_research(
             "與工具查到的即時數據互相對照，不可取代即時數據）\n" + kb_context
         )
 
-    payload = await claude_code_research(system, history, user_message, tool_names=tool_names)
+    payload = await llm_research(system, history, user_message, tool_names=tool_names)
     report, conclusion = extract_conclusion(payload["result"])
     used_symbols = list(dict.fromkeys(_SYMBOL_RE.findall(report)))
     logger.info(f"ResearchAgent: done, symbols={used_symbols}, cost=${payload['cost_usd']:.4f}")

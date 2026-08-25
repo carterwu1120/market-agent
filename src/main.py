@@ -13,14 +13,17 @@ def setup_logging():
     logger.add(
         sys.stderr,
         level=settings.log_level,
-        format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan> - {message}",
+        format=(
+            "<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | "
+            "<cyan>{name}</cyan> - {message}"
+        ),
     )
     logger.add("logs/market_agent.log", rotation="10 MB", retention="7 days", level="DEBUG")
 
 
 def main():
     setup_logging()
-    logger.info("Starting Market Agent | LLM: claude_code")
+    logger.info(f"Starting Market Agent | LLM: {settings.llm_backend}")
 
     async def _start():
         from src.bot.discord_bot import bot
