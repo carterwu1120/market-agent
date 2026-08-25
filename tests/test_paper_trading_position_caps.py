@@ -12,7 +12,7 @@ from src.config import settings
 from src.memory.store import init_storage
 from src.tools import paper_trading_actions as actions
 
-_PRICE_OK = {"last_price": 100.0}
+_PRICE_OK = {"price": 100.0}
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +21,7 @@ async def _temp_db(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "paper_trading_max_short_term_positions", 2)
     monkeypatch.setattr(settings, "paper_trading_max_long_term_positions", 1)
     monkeypatch.setattr(settings, "schedule_report_channel_id", "")
-    monkeypatch.setattr(actions, "get_stock_price", AsyncMock(return_value=_PRICE_OK))
+    monkeypatch.setattr(actions, "get_quote", AsyncMock(return_value=_PRICE_OK))
     await init_storage()
 
 

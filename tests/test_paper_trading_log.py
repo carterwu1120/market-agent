@@ -13,7 +13,7 @@ from src.memory.paper_trading_store import get_recent_log, log_event, open_posit
 from src.memory.store import init_storage
 from src.tools import paper_trading_actions as actions
 
-_PRICE_OK = {"last_price": 100.0}
+_PRICE_OK = {"price": 100.0}
 
 
 @pytest.fixture(autouse=True)
@@ -65,7 +65,7 @@ async def test_symbol_is_optional_for_non_symbol_events():
 # ── integration: paper_trading_actions writes to the log on success ─────
 
 async def test_buy_writes_a_log_entry(monkeypatch):
-    monkeypatch.setattr(actions, "get_stock_price", AsyncMock(return_value=_PRICE_OK))
+    monkeypatch.setattr(actions, "get_quote", AsyncMock(return_value=_PRICE_OK))
 
     await actions.buy("2330.TW", "test reason")
 
@@ -75,7 +75,7 @@ async def test_buy_writes_a_log_entry(monkeypatch):
 
 
 async def test_sell_writes_a_log_entry(monkeypatch):
-    monkeypatch.setattr(actions, "get_stock_price", AsyncMock(return_value=_PRICE_OK))
+    monkeypatch.setattr(actions, "get_quote", AsyncMock(return_value=_PRICE_OK))
     await open_position("2330.TW", entry_price=90.0, horizon="short_term")
 
     await actions.sell("2330.TW", "test reason", "take_profit")
@@ -103,7 +103,7 @@ async def test_cancel_condition_writes_a_log_entry():
 
 
 async def test_failed_buy_does_not_write_a_log_entry(monkeypatch):
-    monkeypatch.setattr(actions, "get_stock_price", AsyncMock(return_value={"error": "timeout"}))
+    monkeypatch.setattr(actions, "get_quote", AsyncMock(return_value={"error": "timeout"}))
 
     result = await actions.buy("2330.TW", "test reason")
 

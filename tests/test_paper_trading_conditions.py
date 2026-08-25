@@ -16,7 +16,7 @@ from src.memory.paper_trading_store import get_active_conditions, open_position
 from src.memory.store import init_storage
 from src.tools import paper_trading_actions as actions
 
-_PRICE_OK = {"last_price": 100.0}
+_PRICE_OK = {"price": 100.0}
 _TECHNICAL_OK = {"rsi_14": 25.0, "sma_20": 105.0}
 
 
@@ -70,7 +70,7 @@ async def test_cancel_condition_fails_when_not_found():
 
 async def test_buy_condition_triggers_when_price_crosses_below_threshold(monkeypatch):
     await actions.set_condition("2330.TW", "close", "lt", 150.0, "buy", allocation_pct=10.0)
-    monkeypatch.setattr(loop, "get_stock_price", AsyncMock(return_value=_PRICE_OK))  # 100 < 150
+    monkeypatch.setattr(loop, "get_quote", AsyncMock(return_value=_PRICE_OK))  # 100 < 150
     monkeypatch.setattr(loop, "get_technical_indicators", AsyncMock(return_value=_TECHNICAL_OK))
     buy_mock = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(loop, "buy", buy_mock)
@@ -83,7 +83,7 @@ async def test_buy_condition_triggers_when_price_crosses_below_threshold(monkeyp
 
 async def test_condition_does_not_trigger_when_threshold_not_met(monkeypatch):
     await actions.set_condition("2330.TW", "close", "lt", 50.0, "buy")  # 100 is not < 50
-    monkeypatch.setattr(loop, "get_stock_price", AsyncMock(return_value=_PRICE_OK))
+    monkeypatch.setattr(loop, "get_quote", AsyncMock(return_value=_PRICE_OK))
     monkeypatch.setattr(loop, "get_technical_indicators", AsyncMock(return_value=_TECHNICAL_OK))
     buy_mock = AsyncMock()
     monkeypatch.setattr(loop, "buy", buy_mock)
@@ -97,7 +97,7 @@ async def test_condition_does_not_trigger_when_threshold_not_met(monkeypatch):
 async def test_sell_condition_triggers_and_calls_sell(monkeypatch):
     await open_position("2330.TW", entry_price=100.0, horizon="short_term")
     await actions.set_condition("2330.TW", "rsi_14", "lt", 30.0, "sell", exit_reason="take_profit")
-    monkeypatch.setattr(loop, "get_stock_price", AsyncMock(return_value=_PRICE_OK))
+    monkeypatch.setattr(loop, "get_quote", AsyncMock(return_value=_PRICE_OK))
     monkeypatch.setattr(loop, "get_technical_indicators", AsyncMock(return_value=_TECHNICAL_OK))
     sell_mock = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(loop, "sell", sell_mock)
@@ -110,7 +110,7 @@ async def test_sell_condition_triggers_and_calls_sell(monkeypatch):
 
 async def test_triggered_condition_is_not_reevaluated(monkeypatch):
     await actions.set_condition("2330.TW", "close", "lt", 150.0, "buy")
-    monkeypatch.setattr(loop, "get_stock_price", AsyncMock(return_value=_PRICE_OK))
+    monkeypatch.setattr(loop, "get_quote", AsyncMock(return_value=_PRICE_OK))
     monkeypatch.setattr(loop, "get_technical_indicators", AsyncMock(return_value=_TECHNICAL_OK))
     buy_mock = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(loop, "buy", buy_mock)
@@ -128,7 +128,7 @@ async def test_kd_condition_triggers_using_new_technical_field(monkeypatch):
     # path as the original fields, not a separate code path.
     await actions.set_condition("2330.TW", "kd_k", "lt", 30.0, "sell", exit_reason="stop_loss")
     await open_position("2330.TW", entry_price=100.0, horizon="short_term")
-    monkeypatch.setattr(loop, "get_stock_price", AsyncMock(return_value=_PRICE_OK))
+    monkeypatch.setattr(loop, "get_quote", AsyncMock(return_value=_PRICE_OK))
     monkeypatch.setattr(
         loop, "get_technical_indicators", AsyncMock(return_value={"kd_k": 25.0, "kd_d": 40.0})
     )
@@ -142,7 +142,7 @@ async def test_kd_condition_triggers_using_new_technical_field(monkeypatch):
 
 async def test_streak_condition_fetches_institutional_data_only_when_referenced(monkeypatch):
     await actions.set_condition("2330.TW", "trust_streak_days", "gte", 3.0, "buy")
-    monkeypatch.setattr(loop, "get_stock_price", AsyncMock(return_value=_PRICE_OK))
+    monkeypatch.setattr(loop, "get_quote", AsyncMock(return_value=_PRICE_OK))
     monkeypatch.setattr(loop, "get_technical_indicators", AsyncMock(return_value=_TECHNICAL_OK))
     streak_mock = AsyncMock(return_value={"trust_streak_days": 5, "foreign_streak_days": 0})
     monkeypatch.setattr(loop, "get_institutional_streak", streak_mock)
@@ -157,7 +157,7 @@ async def test_streak_condition_fetches_institutional_data_only_when_referenced(
 
 async def test_streak_not_fetched_when_no_condition_references_it(monkeypatch):
     await actions.set_condition("2330.TW", "close", "lt", 150.0, "buy")
-    monkeypatch.setattr(loop, "get_stock_price", AsyncMock(return_value=_PRICE_OK))
+    monkeypatch.setattr(loop, "get_quote", AsyncMock(return_value=_PRICE_OK))
     monkeypatch.setattr(loop, "get_technical_indicators", AsyncMock(return_value=_TECHNICAL_OK))
     streak_mock = AsyncMock()
     monkeypatch.setattr(loop, "get_institutional_streak", streak_mock)
@@ -170,7 +170,7 @@ async def test_streak_not_fetched_when_no_condition_references_it(monkeypatch):
 
 async def test_missing_indicator_value_skips_without_crashing(monkeypatch):
     await actions.set_condition("2330.TW", "rsi_14", "lt", 30.0, "buy")
-    monkeypatch.setattr(loop, "get_stock_price", AsyncMock(return_value=_PRICE_OK))
+    monkeypatch.setattr(loop, "get_quote", AsyncMock(return_value=_PRICE_OK))
     monkeypatch.setattr(
         loop, "get_technical_indicators", AsyncMock(return_value={"error": "fetch failed"})
     )

@@ -33,8 +33,8 @@ from src.memory.paper_trading_store import (
 )
 from src.tools.broker import Broker
 from src.tools.discord_tools import send_channel_message
+from src.tools.market_data import get_quote
 from src.tools.paper_broker import PaperBroker
-from src.tools.stock_data import get_stock_price
 
 # Typed against the generic Broker seam, not PaperBroker directly -- the
 # business-rule logic below (buy()/sell()) only ever depends on that shape.
@@ -44,7 +44,7 @@ _VALID_EXIT_REASONS = {"take_profit", "stop_loss", "llm_signal"}
 _VALID_HORIZONS = {"short_term", "long_term"}
 
 # Indicators a conditional order can reference -- "close" comes from
-# get_stock_price() (real intraday last price); trust_streak_days/
+# MarketDataProvider.get_quote() (currently delayed Yahoo price); trust_streak_days/
 # foreign_streak_days come from get_institutional_streak() (chip_data.py);
 # everything else comes from get_technical_indicators() (daily-bar-derived,
 # same values /stock's technical_analysis tool already surfaces). Kept as a
@@ -89,7 +89,7 @@ async def get_status() -> dict:
 async def buy(
     symbol: str, reason: str, horizon: str = "short_term", allocation_pct: float = 10.0
 ) -> dict:
-    """Opens a position at the real current price. allocation_pct (% of the
+    """Opens a position at the configured provider's current quote. allocation_pct (% of the
     fixed starting capital, not current equity) is the agent's own call on
     conviction/sizing, clamped into [min, max] by calc_allocation() so one
     overconfident call can't all-in a single symbol. Returns {"error": str}
@@ -122,11 +122,11 @@ async def buy(
                 )
             }
 
-        price_data = await get_stock_price(symbol)
-        price = price_data.get("last_price")
-        if price_data.get("error") or not price:
+        quote = await get_quote(symbol)
+        price = quote.get("price")
+        if quote.get("error") or not price:
             return {
-                "error": f"{symbol} 無法取得即時股價，交易取消：{price_data.get('error', '無資料')}"
+                "error": f"{symbol} 無法取得行情，交易取消：{quote.get('error', '無資料')}"
             }
 
         shares, allocation_amount = calc_allocation(allocation_pct, price)
@@ -170,7 +170,7 @@ async def buy(
 
 
 async def sell(symbol: str, reason: str, exit_reason: str) -> dict:
-    """Closes an existing position at the real current price. Returns
+    """Closes an existing position at the configured provider's current quote. Returns
     {"error": str} on failure, or {"success": True, "symbol", "price",
     "exit_reason", "pnl_pct"}."""
     async with _trade_lock:
@@ -180,11 +180,11 @@ async def sell(symbol: str, reason: str, exit_reason: str) -> dict:
         if exit_reason not in _VALID_EXIT_REASONS:
             exit_reason = "llm_signal"
 
-        price_data = await get_stock_price(symbol)
-        price = price_data.get("last_price")
-        if price_data.get("error") or not price:
+        quote = await get_quote(symbol)
+        price = quote.get("price")
+        if quote.get("error") or not price:
             return {
-                "error": f"{symbol} 無法取得即時股價，交易取消：{price_data.get('error', '無資料')}"
+                "error": f"{symbol} 無法取得行情，交易取消：{quote.get('error', '無資料')}"
             }
 
         position = existing[0]

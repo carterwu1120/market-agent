@@ -24,12 +24,12 @@ async def _setup(tmp_path, monkeypatch):
 
 
 def _price(value: float) -> AsyncMock:
-    return AsyncMock(return_value={"last_price": value})
+    return AsyncMock(return_value={"price": value})
 
 
 async def test_position_within_threshold_is_left_open(monkeypatch):
     await open_position("2330.TW", entry_price=100.0, horizon="short_term")
-    monkeypatch.setattr(loop, "get_stock_price", _price(90.0))  # -10%, under 15% threshold
+    monkeypatch.setattr(loop, "get_quote", _price(90.0))  # -10%, under 15% threshold
     sell_mock = AsyncMock()
     monkeypatch.setattr(loop, "sell", sell_mock)
 
@@ -41,7 +41,7 @@ async def test_position_within_threshold_is_left_open(monkeypatch):
 
 async def test_short_term_position_breaching_threshold_is_force_sold(monkeypatch):
     await open_position("2330.TW", entry_price=100.0, horizon="short_term")
-    monkeypatch.setattr(loop, "get_stock_price", _price(84.0))  # -16%, past 15% threshold
+    monkeypatch.setattr(loop, "get_quote", _price(84.0))  # -16%, past 15% threshold
     sell_mock = AsyncMock()
     monkeypatch.setattr(loop, "sell", sell_mock)
 
@@ -54,7 +54,7 @@ async def test_short_term_position_breaching_threshold_is_force_sold(monkeypatch
 
 async def test_long_term_position_uses_its_own_wider_threshold(monkeypatch):
     await open_position("2454.TW", entry_price=100.0, horizon="long_term")
-    monkeypatch.setattr(loop, "get_stock_price", _price(82.0))  # -18%: under short_term's 15
+    monkeypatch.setattr(loop, "get_quote", _price(82.0))  # -18%: under short_term's 15
     sell_mock = AsyncMock()                                     # threshold but under long_term's 20
     monkeypatch.setattr(loop, "sell", sell_mock)
 
@@ -65,7 +65,7 @@ async def test_long_term_position_uses_its_own_wider_threshold(monkeypatch):
 
 async def test_price_fetch_error_does_not_crash_or_trigger_sell(monkeypatch):
     await open_position("2330.TW", entry_price=100.0, horizon="short_term")
-    monkeypatch.setattr(loop, "get_stock_price", AsyncMock(return_value={"error": "timeout"}))
+    monkeypatch.setattr(loop, "get_quote", AsyncMock(return_value={"error": "timeout"}))
     sell_mock = AsyncMock()
     monkeypatch.setattr(loop, "sell", sell_mock)
 

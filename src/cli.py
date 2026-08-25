@@ -63,7 +63,7 @@ async def _print_status() -> None:
     state" to drift out of sync with those."""
     from src.agents.paper_trading import evaluate_paper_trades, simulate_portfolio_equity
     from src.memory.paper_trading_store import get_active_conditions, get_watchlist
-    from src.tools.stock_data import get_stock_price
+    from src.tools.market_data import get_quote
 
     result = await evaluate_paper_trades()
     eq = simulate_portfolio_equity(result["positions"])
@@ -98,7 +98,7 @@ async def _print_status() -> None:
     watchlist = await get_watchlist()
     if watchlist:
         prices = await asyncio.gather(
-            *[get_stock_price(w["symbol"]) for w in watchlist], return_exceptions=True
+            *[get_quote(w["symbol"]) for w in watchlist], return_exceptions=True
         )
         table = Table(title="觀察名單")
         for col in ("股票", "加入時間", "現價", "緊盯狀態"):
@@ -106,8 +106,8 @@ async def _print_status() -> None:
         for w, price in zip(watchlist, prices):
             if isinstance(price, Exception) or price.get("error"):
                 price_str = "查詢失敗"
-            elif price.get("last_price") is not None:
-                price_str = f"{price['last_price']:.2f}"
+            elif price.get("price") is not None:
+                price_str = f"{price['price']:.2f}"
             else:
                 price_str = "N/A"
             first_seen = datetime.fromtimestamp(w["first_seen"], tz=_TW_TZ).strftime("%m/%d %H:%M")

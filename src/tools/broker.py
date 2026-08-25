@@ -19,7 +19,7 @@ docs/adr/0002-execution-backend-seam.md for the fuller discussion:
 1. Real order execution is asynchronous. Shioaji submits an order and then
    reports fills via a callback (PendingSubmit -> Submitted -> Filled /
    Cancelled / Failed) -- it does not hand back a final price synchronously
-   the way get_stock_price() + an instant DB write does for paper trading.
+   the way MarketDataProvider.get_quote() + an instant DB write does for paper trading.
    A real backend implementing execute_buy()/execute_sell() would need
    either an internal wait-for-fill, or this Protocol needs to grow a
    pending/async state.

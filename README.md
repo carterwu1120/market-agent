@@ -219,6 +219,19 @@ CODEX_REASONING_EFFORT=medium
 
 > Claude CLI 會提供 `total_cost_usd`，可納入紙上交易的每日美元預算。Codex CLI 目前沒有等價的美元成本輸出，因此使用 Codex 時 `PAPER_TRADING_DAILY_BUDGET_USD` 無法統計 Codex 呼叫成本，程式會寫入警告而不會虛構金額。
 
+## 行情來源
+
+紙上交易的買賣參考價、機械停損、條件單與持倉估值都透過
+`MarketDataProvider` 取得，不直接依賴 Yahoo。現在唯一實作是
+`YahooMarketDataProvider`；歷史 K 線與技術指標仍由 Yahoo 提供。
+
+```env
+MARKET_DATA_PROVIDER=yahoo
+```
+
+這個接縫預留給之後新增唯讀的 `ShioajiMarketDataProvider`：即時行情可以換成
+Shioaji，而交易執行仍維持 `PaperBroker` 與 SQLite 模擬持倉。
+
 > **為什麼分兩種**：早期曾嘗試用純文字 prompt 要求 `claude -p` 輸出 `{"action": "...", "args": {...}}` 這種自訂 JSON 協議來模擬 tool-calling，實測約 30–40% 時候會失敗——`claude -p` 背後是完整的 agent runtime，不是單純的文字補全 API，遇到「不確定工具是否真的存在」的情境會自行幻想/扮演整個工具呼叫與回傳結果。改用真正的 MCP tool-calling 後，這個失敗模式完全消失（測試中連續 10/10 次正確執行，含多工具串接）。單次分類這類「不需要工具」的呼叫則沒有這個問題，維持純文字 `claude -p` 即可穩定運作。
 
 ---

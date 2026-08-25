@@ -26,7 +26,7 @@ async def _setup(tmp_path, monkeypatch):
 
 
 async def test_buy_records_shares_and_allocation_from_pct(monkeypatch):
-    monkeypatch.setattr(actions, "get_stock_price", AsyncMock(return_value={"last_price": 100.0}))
+    monkeypatch.setattr(actions, "get_quote", AsyncMock(return_value={"price": 100.0}))
 
     result = await actions.buy("2330.TW", "test", allocation_pct=10.0)
 
@@ -36,7 +36,7 @@ async def test_buy_records_shares_and_allocation_from_pct(monkeypatch):
 
 
 async def test_buy_rejected_when_simulated_cash_cannot_cover_it(monkeypatch):
-    monkeypatch.setattr(actions, "get_stock_price", AsyncMock(return_value={"last_price": 100.0}))
+    monkeypatch.setattr(actions, "get_quote", AsyncMock(return_value={"price": 100.0}))
     # 20% (max) x 500,000 = 100,000 per trade; 5 buys commit the full 500,000
     for i in range(5):
         result = await actions.buy(f"{1000 + i}.TW", "test", allocation_pct=20.0)
@@ -51,7 +51,7 @@ async def test_buy_rejected_when_simulated_cash_cannot_cover_it(monkeypatch):
 async def test_buy_rejected_when_price_too_high_for_min_allocation(monkeypatch):
     # min allocation 5% of 500,000 = 25,000; a 30,000 stock buys 0 shares
     monkeypatch.setattr(
-        actions, "get_stock_price", AsyncMock(return_value={"last_price": 30_000.0})
+        actions, "get_quote", AsyncMock(return_value={"price": 30_000.0})
     )
 
     result = await actions.buy("9999.TW", "test", allocation_pct=5.0)

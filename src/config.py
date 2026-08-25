@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     codex_model: str = ""
     codex_reasoning_effort: Literal["low", "medium", "high", "xhigh"] = "medium"
 
+    # Quote source used by trading execution, stop-losses, conditions, and
+    # mark-to-market reporting. Historical/technical data remains on Yahoo.
+    market_data_provider: Literal["yahoo"] = "yahoo"
+
     @property
     def allowed_channels(self) -> set[str]:
         if not self.allowed_channel_ids:

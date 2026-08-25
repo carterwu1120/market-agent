@@ -1,6 +1,6 @@
 """Paper-trading evaluation: checks the position lifecycle recorded by
-src/agents/paper_trading_loop.py against real prices, with no real or
-third-party trading account involved.
+src/agents/paper_trading_loop.py against configured market quotes, with no
+real or third-party trading account involved.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import asyncio
 
 from src.config import settings
 from src.memory.paper_trading_store import get_all_positions
-from src.tools.stock_data import get_stock_price
+from src.tools.market_data import get_quote
 
 
 def calc_pnl_pct(direction: str, entry_price: float, current_price: float) -> float | None:
@@ -43,12 +43,12 @@ async def evaluate_paper_trades() -> dict:
     closed_positions = [p for p in positions if p["status"] == "closed"]
 
     symbols = list({p["symbol"] for p in open_positions})
-    prices = await asyncio.gather(*[get_stock_price(s) for s in symbols], return_exceptions=True)
+    prices = await asyncio.gather(*[get_quote(s) for s in symbols], return_exceptions=True)
     current_price_map = {}
     for symbol, result in zip(symbols, prices):
         if isinstance(result, Exception) or result.get("error"):
             continue
-        current_price_map[symbol] = result.get("last_price")
+        current_price_map[symbol] = result.get("price")
 
     scored = []
     for p in positions:

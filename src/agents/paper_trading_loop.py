@@ -55,8 +55,9 @@ from src.memory.paper_trading_store import (
 from src.memory.store import init_storage
 from src.tools.chip_data import get_institutional_streak
 from src.tools.discord_tools import send_channel_message
+from src.tools.market_data import get_quote
 from src.tools.paper_trading_actions import buy, sell
-from src.tools.stock_data import get_stock_price, get_technical_indicators
+from src.tools.stock_data import get_technical_indicators
 
 # Maps a condition's stored operator string to the comparison it performs:
 # evaluate(indicator_value, threshold). Kept alongside _check_conditions()
@@ -175,9 +176,9 @@ async def _check_mechanical_stop_loss() -> None:
             if p["horizon"] == "short_term"
             else settings.paper_trading_long_term_stop_loss_pct
         )
-        price_data = await get_stock_price(p["symbol"])
-        price = price_data.get("last_price")
-        if price_data.get("error") or not price:
+        quote = await get_quote(p["symbol"])
+        price = quote.get("price")
+        if quote.get("error") or not price:
             continue
         pnl = calc_pnl_pct("buy", p["entry_price"], price)
         if pnl is not None and pnl <= -threshold:
@@ -218,9 +219,9 @@ async def _check_conditions() -> None:
     for symbol, symbol_conditions in by_symbol.items():
         indicator_values: dict[str, float] = {}
 
-        price_data = await get_stock_price(symbol)
-        if not price_data.get("error") and price_data.get("last_price"):
-            indicator_values["close"] = price_data["last_price"]
+        quote = await get_quote(symbol)
+        if not quote.get("error") and quote.get("price"):
+            indicator_values["close"] = quote["price"]
 
         technical = await get_technical_indicators(symbol)
         if not technical.get("error"):

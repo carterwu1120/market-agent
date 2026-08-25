@@ -15,7 +15,7 @@ from src.memory.paper_trading_store import open_position
 from src.memory.store import init_storage
 from src.tools import paper_trading_actions as actions
 
-_PRICE_OK = {"last_price": 123.45}
+_PRICE_OK = {"price": 123.45}
 
 
 @pytest.fixture(autouse=True)
@@ -33,15 +33,15 @@ async def test_status_with_empty_state_does_not_crash():
 
 async def test_status_with_position_watchlist_and_condition_does_not_crash(monkeypatch):
     import src.agents.paper_trading as paper_trading_module
-    import src.tools.stock_data as stock_data_module
+    import src.tools.market_data as market_data_module
 
     # Two separate bindings need patching: cli.py's own `from
-    # src.tools.stock_data import get_stock_price` (used for watchlist
+    # src.tools.market_data import get_quote` (used for watchlist
     # prices) is a fresh lookup at call time, but evaluate_paper_trades()
     # (used for position prices) already bound its own module-level
     # reference to the same function at import time.
-    monkeypatch.setattr(stock_data_module, "get_stock_price", AsyncMock(return_value=_PRICE_OK))
-    monkeypatch.setattr(paper_trading_module, "get_stock_price", AsyncMock(return_value=_PRICE_OK))
+    monkeypatch.setattr(market_data_module, "get_quote", AsyncMock(return_value=_PRICE_OK))
+    monkeypatch.setattr(paper_trading_module, "get_quote", AsyncMock(return_value=_PRICE_OK))
     await open_position("2330.TW", entry_price=100.0, horizon="short_term", shares=10)
     await actions.set_condition("2454.TW", "close", "lt", 50.0, "buy")
 
