@@ -11,7 +11,7 @@ MCP tools -- Claude decides for itself which data it wants to check
 before acting, the same way it would for a user-asked question.
 
 Two position horizons, not just one undifferentiated bucket (per
-discussion): a short_term position stays in the tight 5-minute loop so
+discussion): a short_term position stays in the tight 30-minute loop so
 its exit timing gets watched closely; a long_term position graduates out
 of that and only gets reviewed at the broad-scan cadence (40 min) --
 "buy and hold, check in periodically" instead of "watch every tick."
@@ -79,7 +79,7 @@ _CONDITION_STREAK_FIELDS = ("trust_streak_days", "foreign_streak_days")
 
 _TW_TZ = timezone(timedelta(hours=8))
 BROAD_SCAN_INTERVAL = 40 * 60
-TIGHT_SCAN_INTERVAL = 5 * 60
+TIGHT_SCAN_INTERVAL = 30 * 60
 WATCHLIST_TTL = 5 * 60 * 60  # safety net only -- see module docstring
 TICK_SECONDS = 60
 _TRADING_START = dtime(9, 0)
@@ -299,7 +299,7 @@ async def _broad_scan() -> None:
     """Every BROAD_SCAN_INTERVAL: (1) discover new watchlist candidates from
     news, (2) sweep the watchlist's mechanical safety-net expiry, (3) give
     long_term positions a periodic check-in -- they're deliberately not
-    part of the 5-minute tight scan."""
+    part of the 30-minute tight scan."""
     logger.info("paper_trading_loop: broad scan (news -> hot stocks)")
     news_articles = await _fetch_news()
     candidates = await _extract_hot_stocks(news_articles)
@@ -345,7 +345,7 @@ async def _review_long_term_positions() -> None:
     ]
     condition_block = await _relevant_conditions_block({p["symbol"] for p in long_term})
     prompt = (
-        "這是長期持有部位的例行檢視（較低頻率，每次廣掃才會問一次，不是每 5 分鐘）。"
+        "這是長期持有部位的例行檢視（較低頻率，每次廣掃才會問一次，不是每 30 分鐘）。"
         "請檢查以下長期部位，只有在有明確理由時才考慮賣出，否則維持長期持有的初衷，"
         "不需要因為短線波動就出場。務必實際查證真實數據後再決定。\n\n"
         "目前長期持有部位：\n" + "\n".join(position_lines) + condition_block
