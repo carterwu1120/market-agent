@@ -5,6 +5,9 @@ from src.llm_claude_code import (
     ALL_TOOL_NAMES as CLAUDE_ALL_TOOL_NAMES,
 )
 from src.llm_claude_code import (
+    PAPER_TRADING_TOOL_NAMES as CLAUDE_PAPER_TRADING_TOOL_NAMES,
+)
+from src.llm_claude_code import (
     USER_FACING_TOOL_NAMES,
     claude_code_chat,
     claude_code_research,
@@ -12,6 +15,7 @@ from src.llm_claude_code import (
 from src.llm_codex import codex_chat, codex_research
 
 ALL_TOOL_NAMES = CLAUDE_ALL_TOOL_NAMES
+PAPER_TRADING_TOOL_NAMES = CLAUDE_PAPER_TRADING_TOOL_NAMES
 
 
 async def llm_chat(messages: list[dict], system: str = "", timeout: int = 180) -> str:

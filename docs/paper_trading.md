@@ -49,7 +49,15 @@ flowchart TD
 修法是把工具清單拆成兩份（`src/llm_claude_code.py`）：
 
 - `USER_FACING_TOOL_NAMES`（14 個，不含交易工具）—— `run_research()` 的預設值，`/stock`、自由問答都用這份
-- `ALL_TOOL_NAMES`（18 個，含交易工具）—— 只有 `paper_trading_loop.py` 呼叫 `run_research()` 時明確傳入這份
+- `PAPER_TRADING_TOOL_NAMES`（產業／題材、研究、紙上交易工具）—— 只有
+  `paper_trading_loop.py` 呼叫 `run_research()` 時明確傳入這份；不包含 Discord 與 Gmail，
+  避免把無關工具 schema 一起送進每輪決策
+
+紙上交易另外使用較精簡的 `PAPER_TRADING_SYSTEM`。它保留產業／題材、技術面、基本面、
+籌碼、公告、條件單與風控規則，但移除一般助理的訊息／郵件操作說明。`paper_trade_buy`
+還有工具層硬性閘門：同一輪對同一檔股票必須成功完成 `technical_analysis`、
+`fundamental_analysis`、`chip_analysis`、`company_announcements`，缺一項就拒絕買入；
+因此 prompt 要求即使被模型忽略，也不會直接成交。
 
 這樣「查股票」的對話**物理上**沒有下單工具可以用，不是靠 prompt 裡寫規則約束。
 

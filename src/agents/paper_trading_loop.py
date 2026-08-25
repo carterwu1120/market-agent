@@ -39,9 +39,9 @@ from loguru import logger
 from src.agents.daily_brief import _fetch_news
 from src.agents.market_agent import _extract_hot_stocks
 from src.agents.paper_trading import calc_pnl_pct
-from src.agents.research_agent import run_research
+from src.agents.research_agent import PAPER_TRADING_SYSTEM, run_research
 from src.config import settings
-from src.llm import ALL_TOOL_NAMES
+from src.llm import PAPER_TRADING_TOOL_NAMES
 from src.memory.paper_trading_store import (
     add_to_watchlist,
     expire_watchlist,
@@ -351,7 +351,12 @@ async def _review_long_term_positions() -> None:
         "目前長期持有部位：\n" + "\n".join(position_lines) + condition_block
     )
     try:
-        result = await run_research(prompt, [], tool_names=ALL_TOOL_NAMES)
+        result = await run_research(
+            prompt,
+            [],
+            tool_names=PAPER_TRADING_TOOL_NAMES,
+            system_prompt=PAPER_TRADING_SYSTEM,
+        )
         await _track_cost(result.get("cost_usd", 0.0))
         conclusion = result.get("conclusion", "")
         logger.info(f"paper_trading_loop: long-term review conclusion — {conclusion}")
@@ -403,9 +408,14 @@ async def _tight_scan() -> None:
 
     try:
         # Only this call site (and _review_long_term_positions) opts into the
-        # full tool set (incl. paper_trade_*/watchlist_drop) -- see
-        # llm_claude_code.py's USER_FACING_TOOL_NAMES/ALL_TOOL_NAMES split.
-        result = await run_research(prompt, [], tool_names=ALL_TOOL_NAMES)
+        # Trading research tools include sector/theme and all required market
+        # checks, but deliberately exclude unrelated Discord/Gmail tools.
+        result = await run_research(
+            prompt,
+            [],
+            tool_names=PAPER_TRADING_TOOL_NAMES,
+            system_prompt=PAPER_TRADING_SYSTEM,
+        )
         await _track_cost(result.get("cost_usd", 0.0))
         conclusion = result.get("conclusion", "")
         logger.info(f"paper_trading_loop: cycle conclusion — {conclusion}")

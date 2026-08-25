@@ -38,6 +38,24 @@ mcp = MCPServer("market-agent-tools")
 _allowed_raw = os.getenv("MARKET_AGENT_MCP_ALLOWED_TOOLS", "")
 _ALLOWED_TOOLS = {name for name in _allowed_raw.split(",") if name}
 
+_REQUIRED_BUY_CHECKS = {
+    "technical_analysis",
+    "fundamental_analysis",
+    "chip_analysis",
+    "company_announcements",
+}
+_completed_research_checks: dict[str, set[str]] = {}
+
+
+def _normalized_symbol(symbol: str) -> str:
+    normalized = symbol.strip().upper()
+    return f"{normalized}.TW" if normalized.isdigit() else normalized
+
+
+def _mark_research_check(symbol: str, check: str) -> None:
+    normalized = _normalized_symbol(symbol)
+    _completed_research_checks.setdefault(normalized, set()).add(check)
+
 
 def _tool(name: str):
     """Register a tool unless this subprocess was started with a whitelist."""
@@ -98,6 +116,7 @@ async def technical_analysis(symbol: str) -> str:
     )
     if isinstance(ind, Exception) or (isinstance(ind, dict) and ind.get("error")):
         return f"{symbol} 技術面資料取得失敗：{ind}"
+    _mark_research_check(symbol, "technical_analysis")
     price_ok = isinstance(price, dict) and not price.get("error")
     if price_ok:
         from src.memory.stock_store import upsert_daily_price
@@ -123,6 +142,7 @@ async def fundamental_analysis(symbol: str) -> str:
     data = await get_fundamental_data(symbol)
     if data.get("error"):
         return f"{symbol} 基本面資料取得失敗：{data['error']}"
+    _mark_research_check(symbol, "fundamental_analysis")
     from src.memory.stock_store import upsert_daily_fundamental
     _fire_and_forget(upsert_daily_fundamental([data]))
     return (
@@ -192,6 +212,8 @@ async def chip_analysis(symbol: str) -> str:
             f"  投信連續買超:{streak.get('trust_streak_days')}天 "
             f"外資連續買超:{streak.get('foreign_streak_days')}天"
         )
+    if inst_ok and margin_ok:
+        _mark_research_check(symbol, "chip_analysis")
     return "\n".join(parts)
 
 
@@ -239,6 +261,7 @@ async def company_announcements(symbol: str) -> str:
     result = await get_material_info(symbol)
     if result.get("error"):
         return f"{symbol} 重大訊息查詢失敗：{result['error']}"
+    _mark_research_check(symbol, "company_announcements")
     items = result.get("items", [])
     if not items:
         return f"{symbol} 今日無重大訊息公告"
@@ -365,9 +388,19 @@ async def paper_trade_buy(
     價格一律用系統即時查到的真實股價，不接受自行指定價格。
     同一支股票若已有持有中部位，不可重複買進，請先用 paper_trade_status 確認。
     買進後會自動從觀察名單移除，不需要另外呼叫 watchlist_drop。"""
-    result = await paper_trading_actions.buy(symbol, reason, horizon, allocation_pct)
+    normalized = _normalized_symbol(symbol)
+    completed = _completed_research_checks.get(normalized, set())
+    missing = sorted(_REQUIRED_BUY_CHECKS - completed)
+    if missing:
+        return (
+            f"拒絕買入 {normalized}：本輪尚未成功完成必要研究："
+            f"{', '.join(missing)}。請先完成後再呼叫 paper_trade_buy。"
+        )
+
+    result = await paper_trading_actions.buy(normalized, reason, horizon, allocation_pct)
     if result.get("error"):
         return result["error"]
+    _completed_research_checks.pop(normalized, None)
     return (
         f"已買進 {result['symbol']} @ {result['price']} x {result['shares']} 股"
         f"（約 {result['allocation_amount']:.0f} 元，id={result['position_id']}）"

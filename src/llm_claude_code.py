@@ -33,8 +33,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Trading tools are kept out of the default (user-facing) tool set --
 # a /stock question or free-text chat has no business being able to place
-# a trade just because the LLM decided to. Only paper_trading_loop.py
-# explicitly opts into ALL_TOOL_NAMES for its own automated decisions.
+# a trade just because the LLM decided to. paper_trading_loop.py uses the
+# narrower PAPER_TRADING_TOOL_NAMES set: full market research + trading,
+# without unrelated messaging/email capabilities.
 _PAPER_TRADE_TOOL_NAMES = [
     "paper_trade_status", "paper_trade_buy", "paper_trade_sell", "watchlist_drop",
     "paper_trade_set_condition", "paper_trade_cancel_condition",
@@ -49,6 +50,13 @@ ALL_TOOL_NAMES = [
 ]
 
 USER_FACING_TOOL_NAMES = [t for t in ALL_TOOL_NAMES if t not in _PAPER_TRADE_TOOL_NAMES]
+
+PAPER_TRADING_TOOL_NAMES = [
+    "sector_lookup", "theme_lookup", "technical_analysis", "fundamental_analysis",
+    "chip_analysis", "company_news", "stock_history", "web_search",
+    "company_announcements", "company_financial_summary",
+    *_PAPER_TRADE_TOOL_NAMES,
+]
 
 
 class ClaudeCodeError(RuntimeError):

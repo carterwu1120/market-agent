@@ -11,7 +11,7 @@ defeats the entire point of having this file.)
 import pytest
 
 from src.agents import research_agent
-from src.llm import ALL_TOOL_NAMES, USER_FACING_TOOL_NAMES
+from src.llm import PAPER_TRADING_TOOL_NAMES, USER_FACING_TOOL_NAMES
 
 
 @pytest.fixture(autouse=True)
@@ -38,9 +38,17 @@ async def test_user_facing_call_gets_knowledge_base(_capture_system_prompt):
 
 
 async def test_trading_call_gets_knowledge_base(_capture_system_prompt):
-    await research_agent.run_research("檢查觀察名單", [], tool_names=ALL_TOOL_NAMES)
+    await research_agent.run_research(
+        "檢查觀察名單",
+        [],
+        tool_names=PAPER_TRADING_TOOL_NAMES,
+        system_prompt=research_agent.PAPER_TRADING_SYSTEM,
+    )
 
     assert "測試筆記內容" in _capture_system_prompt["system"]
+    assert "強制決策順序" in _capture_system_prompt["system"]
+    assert "Discord" not in _capture_system_prompt["system"]
+    assert "Gmail" not in _capture_system_prompt["system"]
 
 
 async def test_no_notes_available_leaves_system_prompt_unchanged(
