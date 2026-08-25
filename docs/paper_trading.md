@@ -119,9 +119,31 @@ flowchart TD
 
 ## 查看結果
 
-在 Discord 打 `/performance`：持有中的部位顯示浮動損益、已平倉的顯示實現損益，外加整體勝率/平均報酬（只計算已平倉的）。
+**Discord**：`/performance` 顯示持倉損益（持有中浮動、已平倉實現）跟整體勝率/平均報酬；`/watchlist` 顯示觀察名單。有真的買進/賣出時，也會直接發一則訊息到你設定的 `SCHEDULE_REPORT_CHANNEL_ID` 頻道。
 
-有真的買進/賣出時，也會直接發一則訊息到你設定的 `SCHEDULE_REPORT_CHANNEL_ID` 頻道。
+**終端面板（不需要 Discord）**：`uv run python -m src.cli` 進去之後打 `/status`，一次看到：
+
+- 模擬帳戶：起始本金、目前總資產、累計報酬、可用現金、已平倉最大回撤
+- 持倉表：股票、狀態（持有中/已平倉）、短線/長期、股數、進場價、現價或出場價、損益 %
+- 觀察名單：股票、加入時間、即時股價（現場查詢，不是資料庫裡的舊值）、有沒有被緊盯過
+- 有效條件單：id、股票、條件內容、動作（買/賣）
+
+`/status` 純唯讀查詢，不會寫入任何資料。可以在 `python -m src.main`（Discord bot + 紙上交易迴圈）持續運行的同時，另外開一個終端機跑 `python -m src.cli` 觀察——兩個 process 共用同一個 `data/market_agent.db`（WAL mode 支援併發讀寫），互不影響。背後直接重用 `evaluate_paper_trades()`/`simulate_portfolio_equity()`/`get_watchlist()`/`get_active_conditions()` 這幾個函式，跟 Discord 的 `/performance`、agent 的 `paper_trade_status` 看到的是同一套資料來源，不會有兩邊數字對不起來的疑慮。
+
+## 稽核紀錄——「這段期間到底發生了什麼事」
+
+`loguru` 平常印的 log 只在終端機/log 檔裡，不是結構化資料、也沒辦法之後查詢。`paper_trading_log` 表（`src/memory/store.py`）是專門記錄紙上交易迴圈本身動作的**永久稽核紀錄**——跟 `conversation_log`（記錄聊天）同一種精神，但記的是迴圈做了什麼，不會過期、不會被清掉：
+
+- `broad_scan`：找到幾檔候選股
+- `tight_scan`／`long_term_review`：緊盯/長期檢視的結論
+- `stop_loss_triggered`／`condition_triggered`：機械式檢查為什麼觸發（含當下數值跟門檻）
+- `buy`／`sell`：實際成交價、股數、理由
+- `condition_set`／`condition_cancelled`：條件單設定/取消
+- `budget_exceeded`：花費上限警告
+
+寫入是 best-effort（`log_event()` 失敗只會記警告，不會讓交易本身失敗），而且直接建在 `buy()`/`sell()`/`set_condition()` 這些既有函式的成功路徑上，不是另外一套邏輯——只要交易/條件真的發生，就一定有紀錄。
+
+**查詢**：`uv run python -m src.cli` 進去打 `/log`（預設最近 20 筆，`/log 50` 查更多），會列出時間、事件類型、股票、詳情。
 
 ## 每日花費上限
 

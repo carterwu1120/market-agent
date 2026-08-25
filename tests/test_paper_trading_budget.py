@@ -7,16 +7,25 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.agents import paper_trading_loop as loop
+from src.memory.store import init_storage
 
 
 @pytest.fixture(autouse=True)
-def _reset_budget_state(monkeypatch):
-    """Each test starts with a clean slate -- these are module globals."""
+async def _reset_budget_state(tmp_path, monkeypatch):
+    """Each test starts with a clean slate -- these are module globals.
+
+    Also isolates db_path to a temp file: _track_cost() now calls
+    log_event() (paper_trading_log audit table) when budget is exceeded,
+    and without this, a test run would silently write real rows into
+    data/market_agent.db -- exactly the kind of test/production bleed this
+    project's other paper_trading tests already guard against."""
     monkeypatch.setattr(loop, "_daily_cost_usd", 0.0)
     monkeypatch.setattr(loop, "_daily_cost_date", None)
     monkeypatch.setattr(loop, "_budget_notified", False)
     monkeypatch.setattr(loop.settings, "paper_trading_daily_budget_usd", 1.0)
     monkeypatch.setattr(loop.settings, "schedule_report_channel_id", "")
+    monkeypatch.setattr(loop.settings, "db_path", str(tmp_path / "test.db"))
+    await init_storage()
 
 
 def test_not_exceeded_before_any_spend():

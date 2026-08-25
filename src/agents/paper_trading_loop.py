@@ -48,6 +48,7 @@ from src.memory.paper_trading_store import (
     get_active_conditions,
     get_open_positions,
     get_watchlist,
+    log_event,
     mark_condition_triggered,
     touch_watchlist,
 )
@@ -150,6 +151,11 @@ async def _track_cost(cost_usd: float) -> None:
                 f"${settings.paper_trading_daily_budget_usd:.2f}），暫停決策直到下個交易時段。"
                 f"觀察名單仍會繼續更新，但不會再判斷買賣。",
             )
+        await log_event(
+            "budget_exceeded",
+            f"累計花費 ${_daily_cost_usd:.2f} 達上限 "
+            f"${settings.paper_trading_daily_budget_usd:.2f}",
+        )
 
 
 async def _check_mechanical_stop_loss() -> None:
@@ -178,6 +184,9 @@ async def _check_mechanical_stop_loss() -> None:
             logger.warning(
                 f"paper_trading_loop: mechanical stop-loss triggered for "
                 f"{p['symbol']} ({pnl}% <= -{threshold}%)"
+            )
+            await log_event(
+                "stop_loss_triggered", f"pnl={pnl}% <= -{threshold}%", symbol=p["symbol"]
             )
             await sell(
                 p["symbol"], reason="機械式停損保險觸發（非 agent 判斷）", exit_reason="stop_loss"
@@ -243,6 +252,12 @@ async def _check_conditions() -> None:
                 f"paper_trading_loop: condition {c['id']} triggered for {symbol} "
                 f"({c['indicator']}={value} {c['operator']} {c['threshold']}) -> {c['action']}"
             )
+            await log_event(
+                "condition_triggered",
+                f"id={c['id']} {c['indicator']}={value} {c['operator']} {c['threshold']} "
+                f"-> {c['action']}",
+                symbol=symbol,
+            )
             if c["action"] == "buy":
                 result = await buy(
                     symbol, c["reason"] or "條件觸發", c["horizon"], c["allocation_pct"]
@@ -300,6 +315,9 @@ async def _broad_scan() -> None:
         f"paper_trading_loop: broad scan found {len(candidates)} candidates, "
         f"{new_count} new to watchlist"
     )
+    await log_event(
+        "broad_scan", f"found {len(candidates)} candidates, {new_count} new to watchlist"
+    )
 
     expired = await expire_watchlist(time.time() - WATCHLIST_TTL)
     if expired:
@@ -336,6 +354,7 @@ async def _review_long_term_positions() -> None:
         await _track_cost(result.get("cost_usd", 0.0))
         conclusion = result.get("conclusion", "")
         logger.info(f"paper_trading_loop: long-term review conclusion — {conclusion}")
+        await log_event("long_term_review", conclusion)
     except Exception as exc:
         logger.warning(f"paper_trading_loop: long-term review failed: {exc}")
 
@@ -387,7 +406,13 @@ async def _tight_scan() -> None:
         # llm_claude_code.py's USER_FACING_TOOL_NAMES/ALL_TOOL_NAMES split.
         result = await run_research(prompt, [], tool_names=ALL_TOOL_NAMES)
         await _track_cost(result.get("cost_usd", 0.0))
-        logger.info(f"paper_trading_loop: cycle conclusion — {result.get('conclusion', '')}")
+        conclusion = result.get("conclusion", "")
+        logger.info(f"paper_trading_loop: cycle conclusion — {conclusion}")
+        await log_event(
+            "tight_scan",
+            f"{len(due_watchlist)} watchlist due, {len(short_term_positions)} "
+            f"short-term positions — {conclusion}",
+        )
     except Exception as exc:
         logger.warning(f"paper_trading_loop: research call failed: {exc}")
         return

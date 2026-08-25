@@ -26,6 +26,7 @@ from src.memory.paper_trading_store import (
     close_position,
     get_active_conditions,
     get_open_positions,
+    log_event,
     open_position,
     remove_from_watchlist,
 )
@@ -144,6 +145,11 @@ async def buy(
         f"📈 紙上交易買進：{symbol} @ {price} x {shares} 股（約 {allocation_amount:.0f} 元，"
         f"{horizon_label}）\n理由：{reason}"
     )
+    await log_event(
+        "buy",
+        f"{price} x {shares} 股（約 {allocation_amount:.0f} 元，{horizon_label}）理由：{reason}",
+        symbol=symbol,
+    )
     return {
         "success": True, "symbol": symbol, "price": price, "shares": shares,
         "allocation_amount": allocation_amount, "position_id": position_id,
@@ -174,6 +180,9 @@ async def sell(symbol: str, reason: str, exit_reason: str) -> dict:
     pnl = calc_pnl_pct("buy", position["entry_price"], price)
     await _notify(
         f"📉 紙上交易賣出：{symbol} @ {price}（{exit_reason}，損益 {pnl}%）\n理由：{reason}"
+    )
+    await log_event(
+        "sell", f"{price}（{exit_reason}，損益 {pnl}%）理由：{reason}", symbol=symbol
     )
     return {
         "success": True, "symbol": symbol, "price": price,
@@ -230,6 +239,11 @@ async def set_condition(
     )
     if condition_id is None:
         return {"error": "條件寫入失敗，請稍後再試"}
+    await log_event(
+        "condition_set",
+        f"id={condition_id} {indicator} {operator} {threshold} -> {action}",
+        symbol=symbol,
+    )
     return {"success": True, "condition_id": condition_id}
 
 
@@ -241,6 +255,7 @@ async def cancel_watch_condition(condition_id: int) -> dict:
     cancelled = await cancel_condition(condition_id)
     if not cancelled:
         return {"error": f"找不到 id={condition_id} 的有效條件（可能已觸發或已取消）"}
+    await log_event("condition_cancelled", f"id={condition_id}")
     return {"success": True, "condition_id": condition_id}
 
 

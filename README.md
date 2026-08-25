@@ -20,7 +20,7 @@
 - 🔍 **ReAct 研究模式** — 複雜/比較型問題（「比較半導體和航運哪個強」「找最值得買的機器人股」）自動進入 ReAct loop，LLM 自主決定呼叫哪些工具、呼叫幾次，直到得出結論；注入對話歷史，支援跨輪比較
 - 📣 **法說會與技術新聞** — 鉅亨網個股搜尋，優先抓法說會、技術突破、產品相關報導，作為「獨家技術亮點」段落的唯一來源
 - ⏰ **定時排程報告** — 每日自動在 08:30（盤前）、12:00（盤中）、14:30（收盤後）發送市場報告至指定 Discord 頻道；設定 `SCHEDULE_REPORT_CHANNEL_ID` 即可啟用，無需手動觸發
-- 🧪 **紙上交易迴圈**（實驗性）— 交易時間內背景自動運作，抓新聞找候選股、交給 react agent 自主查證後判斷買賣，用真實股價記錄進/出場，`/performance` 隨時查績效；`PAPER_TRADING_ENABLED` 開關控制要不要啟動，不影響核心功能，詳見 [`docs/paper_trading.md`](docs/paper_trading.md)
+- 🧪 **紙上交易迴圈**（實驗性）— 交易時間內背景自動運作，抓新聞找候選股、交給 react agent 自主查證後判斷買賣，用真實股價記錄進/出場；模擬帳戶有起始本金與部位大小（`allocation_pct`，agent 自訂）、機械式停損跟持倉上限當失控保險、agent 可設條件單讓機械檢查每分鐘比對真實數據自動觸發買賣（不用每輪都重新問一次 LLM）；`/performance`、`/watchlist`（Discord）或 `/status`（終端，見下方本地 CLI 測試）隨時查狀態；`PAPER_TRADING_ENABLED` 開關控制要不要啟動，不影響核心功能，完整設計細節見 [`docs/paper_trading.md`](docs/paper_trading.md)
 - 🤖 **LLM 後端** — **Claude Code CLI**（`claude -p`，不需 API key，算在 Claude Code 訂閱額度內）
 
 ---
@@ -188,9 +188,13 @@ uv run python -m src.cli
 | `/brief` | 今日市場摘要 |
 | `/stock 2330 2454` | 分析指定股票 |
 | `/schedule pre\|mid\|post` | 觸發排程報告（盤前／盤中／收盤後）|
+| `/status` | 紙上交易帳戶終端面板（持倉/現金/報酬率/觀察名單/條件單），見 [`docs/paper_trading.md`](docs/paper_trading.md) |
+| `/log <N>` | 紙上交易稽核紀錄（廣掃/緊盯/停損/條件單/買賣/花費警告），預設最近 20 筆 |
 | `/clear` | 清除當前 session |
 | `/help` | 顯示說明 |
 | 直接輸入問題 | 自由對話（支援 follow-up） |
+
+`/status` 是唯讀查詢，可以在 `python -m src.main`（Discord bot + 紙上交易迴圈）運行時另開一個終端機跑 `python -m src.cli` 觀察，兩邊共用同一個 SQLite 檔案，互不干擾。
 
 > CLI 與 Discord Bot 使用同一套 `run_agent` pipeline，行為完全一致。記憶／快取都是本機 SQLite 檔案，沒有額外服務需要啟動。
 
@@ -221,7 +225,8 @@ market-agent/
 │   ├── market_agent.db          # 本機 SQLite（session/快取/股票快照，執行後自動建立）
 │   └── knowledge_base/          # 放 .md/.txt，daily_brief 會整篇讀入
 └── src/
-    ├── main.py                  # 啟動入口
+    ├── main.py                  # 啟動入口（Discord bot + 排程 + 紙上交易迴圈）
+    ├── cli.py                   # 本地 CLI（不需 Discord）+ /status 終端面板
     ├── config.py                # 所有設定（pydantic-settings）
     ├── llm_claude_code.py       # Claude Code CLI 後端（claude_code_chat / claude_code_research）
     ├── mcp_server.py            # MCP server：暴露 20 個工具給 claude -p --mcp-config 呼叫
@@ -231,25 +236,26 @@ market-agent/
     │   ├── research_agent.py    # react 的 ReAct 迴圈（交給 Claude Code）
     │   ├── market_agent.py      # 熱門股萃取輔助函數
     │   ├── synthesizer.py       # write_report()：整合資料 + 生成報告
-    │   ├── paper_trading_loop.py # 紙上交易背景迴圈（見 docs/paper_trading.md）
-    │   └── paper_trading.py     # 損益計算 + evaluate_paper_trades()
+    │   ├── paper_trading_loop.py # 紙上交易背景迴圈：廣掃/緊盯/機械式停損/條件單檢查（見 docs/paper_trading.md）
+    │   └── paper_trading.py     # 損益計算 + evaluate_paper_trades() + 資金模擬（simulate_portfolio_equity）
     ├── tools/                   # 各數據源工具函數
     │   ├── news_fetcher.py      # RSS + NewsAPI
-    │   ├── stock_data.py        # yfinance（價格、技術、基本面）
-    │   ├── chip_data.py         # TWSE API（三大法人、融資融券）
+    │   ├── stock_data.py        # yfinance（價格、技術指標、基本面）
+    │   ├── chip_data.py         # TWSE API（三大法人、投信/外資連續買超天數、融資融券）
     │   ├── cmoney_forum.py      # CMoney 討論區爬蟲（社群訊號）
     │   ├── sector_data.py       # TWSE ISIN 類股查詢（官方產業分類）
     │   ├── cmoney_concept.py    # CMoney 概念股爬蟲（159 個主題分類）
     │   ├── theme_search.py      # 主題搜尋（CMoney 優先 + 新聞 fallback）
     │   ├── web_search.py        # 開放網頁搜尋（DuckDuckGo）
     │   ├── mops_data.py         # TWSE MOPS 官方揭露（重大訊息/財報，今日快照）
+    │   ├── paper_trading_actions.py # 紙上交易下單邏輯：buy/sell/set_condition（見 docs/paper_trading.md）
     │   └── knowledge_base.py    # 讀取 data/knowledge_base/ 檔案原文
     ├── memory/
     │   ├── store.py             # SQLite schema + connection helper
     │   ├── cache_store.py       # 通用 TTL 快取（新聞/股票 API）
     │   ├── session_store.py     # 頻道對話 session（SQLite）
     │   ├── stock_store.py       # 每日股票快照 upsert + 歷史查詢
-    │   └── paper_trading_store.py # 紙上交易部位（開倉/平倉）
+    │   └── paper_trading_store.py # 紙上交易部位/觀察名單/條件單/稽核紀錄（開倉/平倉/set_condition/log_event）
     └── bot/
         └── discord_bot.py       # Discord slash commands + 訊息處理
 ```

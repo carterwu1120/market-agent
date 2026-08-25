@@ -1,5 +1,10 @@
 """Interactive CLI for testing the agent pipeline without Discord.
 
+Also doubles as a read-only terminal dashboard for the paper-trading loop
+(/status) -- see docs/paper_trading.md's "終端面板" section. Safe to run
+alongside a live `python -m src.main`: both just open their own short-lived
+SQLite connections to the same WAL-mode data/market_agent.db file.
+
 Usage:
     python -m src.cli
 
@@ -7,6 +12,8 @@ Commands:
     /brief               — Daily market brief
     /stock 2330          — Analyze specific stock(s)
     /schedule pre|mid|post — Trigger scheduled report (盤前/盤中/收盤後)
+    /status              — 紙上交易帳戶狀態（持倉/現金/報酬率/觀察名單/條件單）
+    /log <N>             — 紙上交易稽核紀錄，預設最近 20 筆
     /clear               — Clear session memory
     /quit                — Exit
     <free text>          — Ask anything
@@ -14,7 +21,7 @@ Commands:
 
 import asyncio
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from loguru import logger
 from rich.console import Console
@@ -22,9 +29,12 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.rule import Rule
+from rich.table import Table
 
 from src.agents.pipeline import run_agent
 from src.bot.scheduler import SLOT_PROMPTS
+
+_TW_TZ = timezone(timedelta(hours=8))
 
 console = Console()
 
@@ -37,6 +47,108 @@ def _print_report(report: str) -> None:
     console.print(Rule(f"[bold green]分析報告 {datetime.now().strftime('%H:%M:%S')}"))
     console.print(Markdown(report))
     console.print(Rule())
+
+
+def _pnl_style(pnl_pct: float | None) -> str:
+    if pnl_pct is None:
+        return "dim"
+    return "green" if pnl_pct >= 0 else "red"
+
+
+async def _print_status() -> None:
+    """Read-only snapshot of the paper-trading account -- reuses the exact
+    same functions /performance (Discord) and paper_trade_status (MCP tool)
+    already use, so this never has its own separate notion of "current
+    state" to drift out of sync with those."""
+    from src.agents.paper_trading import evaluate_paper_trades, simulate_portfolio_equity
+    from src.memory.paper_trading_store import get_active_conditions, get_watchlist
+    from src.tools.stock_data import get_stock_price
+
+    result = await evaluate_paper_trades()
+    eq = simulate_portfolio_equity(result["positions"])
+
+    console.print(Rule("[bold cyan]紙上交易帳戶狀態"))
+    return_style = _pnl_style(eq["total_return_pct"])
+    console.print(
+        f"起始本金 [bold]{eq['starting_capital']:,.0f}[/bold] → "
+        f"目前總資產 [bold]{eq['current_equity']:,.0f}[/bold] "
+        f"（累計報酬 [{return_style}]{eq['total_return_pct']}%[/{return_style}]）\n"
+        f"可用現金：{eq['current_cash']:,.0f}　"
+        f"已平倉最大回撤：{eq['realized_max_drawdown_pct']}%"
+    )
+
+    if result["positions"]:
+        table = Table(title="持倉")
+        for col in ("股票", "狀態", "類型", "股數", "進場價", "現價/出場價", "損益%"):
+            table.add_column(col)
+        for p in result["positions"]:
+            horizon_label = "長期" if p.get("horizon") == "long_term" else "短線"
+            status_label = "持有中" if p["status"] == "open" else "已平倉"
+            pnl = f"{p['pnl_pct']:+.2f}%" if p["pnl_pct"] is not None else "N/A"
+            style = _pnl_style(p["pnl_pct"])
+            table.add_row(
+                p["symbol"], status_label, horizon_label, str(p.get("shares", 0)),
+                str(p["entry_price"]), str(p["current_price"]), f"[{style}]{pnl}[/{style}]",
+            )
+        console.print(table)
+    else:
+        console.print("[dim]目前沒有任何持倉[/dim]")
+
+    watchlist = await get_watchlist()
+    if watchlist:
+        prices = await asyncio.gather(
+            *[get_stock_price(w["symbol"]) for w in watchlist], return_exceptions=True
+        )
+        table = Table(title="觀察名單")
+        for col in ("股票", "加入時間", "現價", "緊盯狀態"):
+            table.add_column(col)
+        for w, price in zip(watchlist, prices):
+            if isinstance(price, Exception) or price.get("error"):
+                price_str = "查詢失敗"
+            elif price.get("last_price") is not None:
+                price_str = f"{price['last_price']:.2f}"
+            else:
+                price_str = "N/A"
+            first_seen = datetime.fromtimestamp(w["first_seen"], tz=_TW_TZ).strftime("%m/%d %H:%M")
+            checked = "已緊盯過" if w["last_checked"] else "尚未緊盯"
+            table.add_row(w["symbol"], first_seen, price_str, checked)
+        console.print(table)
+    else:
+        console.print("[dim]觀察名單是空的[/dim]")
+
+    conditions = await get_active_conditions()
+    if conditions:
+        table = Table(title="有效條件單")
+        for col in ("id", "股票", "條件", "動作"):
+            table.add_column(col)
+        for c in conditions:
+            table.add_row(
+                str(c["id"]), c["symbol"],
+                f"{c['indicator']} {c['operator']} {c['threshold']}", c["action"],
+            )
+        console.print(table)
+    else:
+        console.print("[dim]沒有還在等待的條件單[/dim]")
+
+
+async def _print_log(limit: int) -> None:
+    """Reads paper_trading_log -- the permanent audit trail of what the
+    loop itself did (broad/tight scans, mechanical triggers, trades,
+    condition changes), not to be confused with SESSION (chat history)."""
+    from src.memory.paper_trading_store import get_recent_log
+
+    events = await get_recent_log(limit)
+    if not events:
+        console.print("[dim]還沒有任何紀錄[/dim]")
+        return
+
+    table = Table(title=f"紙上交易稽核紀錄（最近 {len(events)} 筆）")
+    for col in ("時間", "事件", "股票", "詳情"):
+        table.add_column(col)
+    for e in events:
+        ts = datetime.fromtimestamp(e["ts"], tz=_TW_TZ).strftime("%m/%d %H:%M:%S")
+        table.add_row(ts, e["event_type"], e.get("symbol") or "-", e["detail"])
+    console.print(table)
 
 
 async def _run(message: str) -> None:
@@ -113,11 +225,26 @@ async def _handle_command_async(cmd: str) -> bool:
         await _run(SLOT_PROMPTS[slot_map[slot_key]])
         return True
 
+    if directive == "/status":
+        with console.status("[bold yellow]查詢中...", spinner="dots"):
+            await _print_status()
+        return True
+
+    if directive == "/log":
+        limit_str = parts[1] if len(parts) > 1 else "20"
+        limit = int(limit_str) if limit_str.isdigit() else 20
+        with console.status("[bold yellow]查詢中...", spinner="dots"):
+            await _print_log(limit)
+        return True
+
     if directive == "/help":
         console.print(Panel(
             "[bold]/brief[/bold]                今日市場摘要\n"
             "[bold]/stock[/bold] [cyan]<代號>[/cyan]       分析指定股票，例如 /stock 2330\n"
             "[bold]/schedule[/bold] [cyan]pre|mid|post[/cyan]  觸發排程報告（盤前/盤中/收盤後）\n"
+            "[bold]/status[/bold]               紙上交易帳戶狀態\n"
+            "                     （持倉/現金/報酬率/觀察名單/條件單）\n"
+            "[bold]/log[/bold] [cyan]<N>[/cyan]              紙上交易稽核紀錄，預設最近 20 筆\n"
             "[bold]/clear[/bold]                清除對話記憶\n"
             "[bold]/quit[/bold]                 離開\n"
             "[dim]或直接輸入問題[/dim]",

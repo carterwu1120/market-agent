@@ -309,3 +309,46 @@ async def expire_watchlist(cutoff_ts: float) -> list[str]:
     mechanical safety net for candidates the agent never explicitly
     dropped via watchlist_drop."""
     return await asyncio.to_thread(_expire_watchlist_sync, cutoff_ts)
+
+
+# ── Audit log ────────────────────────────────────────────────────────────
+
+def _log_event_sync(ts: float, event_type: str, symbol: str | None, detail: str) -> None:
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT INTO paper_trading_log (ts, event_type, symbol, detail) VALUES (?, ?, ?, ?)",
+            (ts, event_type, symbol, detail),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _get_recent_log_sync(limit: int) -> list[dict]:
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM paper_trading_log ORDER BY ts DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+async def log_event(event_type: str, detail: str = "", symbol: str | None = None) -> None:
+    """Appends one row to the permanent paper_trading_log -- best-effort,
+    never raises, so a logging failure can't take down the loop it's
+    recording. Never trimmed (see store.py's schema comment), unlike the
+    watchlist/conditions tables this module also manages."""
+    import time
+
+    try:
+        await asyncio.to_thread(_log_event_sync, time.time(), event_type, symbol, detail)
+    except Exception as exc:
+        logger.warning(f"paper_trading_log: log_event failed for {event_type}: {exc}")
+
+
+async def get_recent_log(limit: int = 50) -> list[dict]:
+    """Most recent events first."""
+    return await asyncio.to_thread(_get_recent_log_sync, limit)

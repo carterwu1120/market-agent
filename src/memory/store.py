@@ -146,6 +146,25 @@ CREATE TABLE IF NOT EXISTS paper_trade_conditions (
 );
 
 CREATE INDEX IF NOT EXISTS ix_paper_conditions_status ON paper_trade_conditions (status);
+
+-- Permanent audit log for the paper-trading loop -- same "never expires,
+-- never trimmed" spirit as conversation_log above, but for what the loop
+-- itself did (broad/tight scans, mechanical triggers, trades, condition
+-- changes) rather than chat turns. Answers "what happened between 2pm and
+-- 3pm" by querying this table directly instead of grepping loguru output,
+-- which isn't structured or guaranteed to still be on disk.
+CREATE TABLE IF NOT EXISTS paper_trading_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    event_type TEXT NOT NULL,  -- broad_scan | tight_scan | long_term_review |
+                                -- stop_loss_triggered | condition_triggered |
+                                -- condition_set | condition_cancelled | buy | sell |
+                                -- budget_exceeded
+    symbol TEXT,               -- nullable -- not every event is about one symbol
+    detail TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS ix_paper_trading_log_ts ON paper_trading_log (ts);
 """
 
 
