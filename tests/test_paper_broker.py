@@ -34,16 +34,21 @@ async def test_get_positions_empty_when_none_open():
 async def test_execute_buy_opens_a_position_and_removes_from_watchlist():
     await add_to_watchlist("2330.TW", "test")
 
-    position_id = await broker.execute_buy(
-        "2330.TW", 100.0, 500, 50_000.0, "test reason", "short_term"
-    )
+    fill = await broker.execute_buy("2330.TW", 100.0, 500, 50_000.0, "test reason", "short_term")
 
-    assert position_id is not None
+    assert fill is not None
+    assert fill["position_id"] is not None
     positions = await broker.get_positions()
     assert len(positions) == 1
     assert positions[0]["symbol"] == "2330.TW"
     assert positions[0]["shares"] == 500
     assert await get_watchlist() == []
+
+
+async def test_execute_buy_returns_fill_price_equal_to_reference_price():
+    fill = await broker.execute_buy("2330.TW", 100.0, 500, 50_000.0, "test reason", "short_term")
+
+    assert fill["fill_price"] == 100.0
 
 
 async def test_execute_buy_reduces_available_cash():
@@ -53,12 +58,13 @@ async def test_execute_buy_reduces_available_cash():
 
 
 async def test_execute_sell_closes_the_position():
-    position_id = await broker.execute_buy(
+    fill = await broker.execute_buy(
         "2330.TW", 100.0, 500, 50_000.0, "test reason", "short_term"
     )
 
-    await broker.execute_sell(position_id, 120.0, "take_profit")
+    sell_fill = await broker.execute_sell(fill["position_id"], 120.0, "take_profit")
 
+    assert sell_fill["fill_price"] == 120.0
     assert await broker.get_positions() == []
 
 

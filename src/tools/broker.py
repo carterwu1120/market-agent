@@ -29,11 +29,31 @@ docs/adr/0002-execution-backend-seam.md for the fuller discussion:
    broker's account API reports right now -- there's no "starting capital"
    concept, so allocation sizing built around a fixed base (calc_allocation)
    would need rethinking too, not just the execution call.
+
+execute_buy()/execute_sell() take `reference_price` (what the caller fetched
+before deciding to trade -- used for sizing/cash checks) and return the
+*fill* price separately, rather than assuming they're the same number.
+PaperBroker's are always equal (nothing between "decide" and "write" can
+move the price). A real backend commonly fills at a different price than
+requested (slippage) -- callers already only depend on the returned
+fill_price for anything downstream (notifications, the audit log, what
+gets stored as entry/exit price), so a real backend can return a different
+number here without paper_trading_actions.py's business-rule code changing
+at all.
 """
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, TypedDict
+
+
+class BuyResult(TypedDict):
+    position_id: int
+    fill_price: float
+
+
+class SellResult(TypedDict):
+    fill_price: float
 
 
 class Broker(Protocol):
@@ -44,11 +64,13 @@ class Broker(Protocol):
     async def execute_buy(
         self,
         symbol: str,
-        price: float,
+        reference_price: float,
         shares: int,
         allocation_amount: float,
         reason: str,
         horizon: str,
-    ) -> int | None: ...
+    ) -> BuyResult | None: ...
 
-    async def execute_sell(self, position_id: int, price: float, exit_reason: str) -> None: ...
+    async def execute_sell(
+        self, position_id: int, reference_price: float, exit_reason: str
+    ) -> SellResult: ...

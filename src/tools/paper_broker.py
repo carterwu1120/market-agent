@@ -14,11 +14,15 @@ from src.memory.paper_trading_store import (
     open_position,
     remove_from_watchlist,
 )
+from src.tools.broker import BuyResult, SellResult
 
 
 class PaperBroker:
     """Implements src.tools.broker.Broker. The only implementation of that
-    seam that exists today."""
+    seam that exists today. fill_price always equals reference_price here --
+    nothing simulated can move the price between "decide" and "write" -- but
+    callers still go through the returned fill_price rather than assuming
+    it, so a real backend with slippage wouldn't need them to change."""
 
     async def get_cash(self) -> float:
         return await get_available_cash()
@@ -29,16 +33,23 @@ class PaperBroker:
     async def execute_buy(
         self,
         symbol: str,
-        price: float,
+        reference_price: float,
         shares: int,
         allocation_amount: float,
         reason: str,
         horizon: str,
-    ) -> int | None:
-        """Returns the new position id, or None if the write failed."""
-        position_id = await open_position(symbol, price, reason, horizon, shares, allocation_amount)
+    ) -> BuyResult | None:
+        """Returns None if the write failed."""
+        position_id = await open_position(
+            symbol, reference_price, reason, horizon, shares, allocation_amount
+        )
+        if position_id is None:
+            return None
         await remove_from_watchlist(symbol)
-        return position_id
+        return {"position_id": position_id, "fill_price": reference_price}
 
-    async def execute_sell(self, position_id: int, price: float, exit_reason: str) -> None:
-        await close_position(position_id, price, exit_reason)
+    async def execute_sell(
+        self, position_id: int, reference_price: float, exit_reason: str
+    ) -> SellResult:
+        await close_position(position_id, reference_price, exit_reason)
+        return {"fill_price": reference_price}

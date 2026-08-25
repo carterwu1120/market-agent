@@ -142,23 +142,30 @@ async def buy(
                 )
             }
 
-        position_id = await _broker.execute_buy(
+        fill = await _broker.execute_buy(
             symbol, price, shares, allocation_amount, reason, horizon
         )
+        if fill is None:
+            return {"error": f"{symbol} 交易執行失敗，請稍後再試"}
 
+    # Everything downstream uses fill["fill_price"], not the reference price
+    # fetched above -- for PaperBroker they're always equal, but a real
+    # backend may fill at a different price (slippage). See broker.py.
+    fill_price = fill["fill_price"]
     horizon_label = "短線操作" if horizon == "short_term" else "長期持有"
     await _notify(
-        f"📈 紙上交易買進：{symbol} @ {price} x {shares} 股（約 {allocation_amount:.0f} 元，"
+        f"📈 紙上交易買進：{symbol} @ {fill_price} x {shares} 股（約 {allocation_amount:.0f} 元，"
         f"{horizon_label}）\n理由：{reason}"
     )
     await log_event(
         "buy",
-        f"{price} x {shares} 股（約 {allocation_amount:.0f} 元，{horizon_label}）理由：{reason}",
+        f"{fill_price} x {shares} 股（約 {allocation_amount:.0f} 元，"
+        f"{horizon_label}）理由：{reason}",
         symbol=symbol,
     )
     return {
-        "success": True, "symbol": symbol, "price": price, "shares": shares,
-        "allocation_amount": allocation_amount, "position_id": position_id,
+        "success": True, "symbol": symbol, "price": fill_price, "shares": shares,
+        "allocation_amount": allocation_amount, "position_id": fill["position_id"],
     }
 
 
@@ -181,17 +188,20 @@ async def sell(symbol: str, reason: str, exit_reason: str) -> dict:
             }
 
         position = existing[0]
-        await _broker.execute_sell(position["id"], price, exit_reason)
+        fill = await _broker.execute_sell(position["id"], price, exit_reason)
 
-    pnl = calc_pnl_pct("buy", position["entry_price"], price)
+    # fill["fill_price"], not the reference price fetched above -- see
+    # broker.py; PaperBroker's are always equal, a real backend's may not be.
+    fill_price = fill["fill_price"]
+    pnl = calc_pnl_pct("buy", position["entry_price"], fill_price)
     await _notify(
-        f"📉 紙上交易賣出：{symbol} @ {price}（{exit_reason}，損益 {pnl}%）\n理由：{reason}"
+        f"📉 紙上交易賣出：{symbol} @ {fill_price}（{exit_reason}，損益 {pnl}%）\n理由：{reason}"
     )
     await log_event(
-        "sell", f"{price}（{exit_reason}，損益 {pnl}%）理由：{reason}", symbol=symbol
+        "sell", f"{fill_price}（{exit_reason}，損益 {pnl}%）理由：{reason}", symbol=symbol
     )
     return {
-        "success": True, "symbol": symbol, "price": price,
+        "success": True, "symbol": symbol, "price": fill_price,
         "exit_reason": exit_reason, "pnl_pct": pnl,
     }
 

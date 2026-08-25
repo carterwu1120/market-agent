@@ -58,3 +58,18 @@ captures what `PaperBroker`'s existing behavior already needed.
   around "no real money at risk." None of that risk calibration was revisited here — swapping in
   a real `Broker` implementation later must not be read as "therefore safe to also keep full
   automation," and deserves its own explicit discussion when real integration is actually planned.
+
+## Follow-up: fill price vs. reference price
+
+A second pass split `execute_buy()`/`execute_sell()`'s price parameter into two distinct concepts:
+the *reference price* the caller fetched before deciding to trade (used for sizing/cash checks),
+and the *fill price* the backend actually executed at, returned separately as `BuyResult`/
+`SellResult` (`{"position_id", "fill_price"}` / `{"fill_price"}`). `paper_trading_actions.py`'s
+`buy()`/`sell()` now use the returned `fill_price` for everything downstream (notifications, the
+audit log, the response dict) instead of assuming it equals the price they fetched.
+
+This was scoped in — unlike the two gaps above, it didn't require guessing at Shioaji's actual
+behavior to get right: `PaperBroker`'s fill price always equals its reference price today (nothing
+simulated can move the price between "decide" and "write"), but a real backend commonly fills at a
+different price than requested (slippage), and the interface now already accounts for that without
+`paper_trading_actions.py` needing to change again later.
