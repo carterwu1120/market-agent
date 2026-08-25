@@ -30,6 +30,12 @@ flowchart TD
 
 真正要留意的 trade-off：因為現在共用同一個 process，紙上交易迴圈如果哪天真的丟出沒接住的例外把整個 process 弄掛，Discord bot 也會跟著死掉（反之亦然）。`run()` 已經把每個週期包在 try/except 裡、錯誤只會被記錄不會往外炸，風險不高，但這是唯一真的要拿來換的東西。
 
+### 執行層是可以替換的（`Broker` 介面）
+
+`paper_trade_buy`/`sell` 背後的 `buy()`/`sell()`（`src/tools/paper_trading_actions.py`）只負責業務規則（部位上限、分配額度計算、格式驗證），真正「執行交易」的部分抽成一個獨立的 `Broker` 介面（`src/tools/broker.py`），現在唯一的實作是 `PaperBroker`（`src/tools/paper_broker.py`，寫進 `paper_positions` 這張模擬帳本）。這是為了以後如果要接真實券商（例如永豐金 Shioaji）鋪路——寫一個新的 `ShioajiBroker` 實作同樣的介面，`buy()`/`sell()` 的業務規則完全不用改。
+
+但這不代表「換一個 class 就能無痛切換成真的下單」——`docs/adr/0002-execution-backend-seam.md` 記錄了兩個目前刻意先不解決的落差：真實下單是非同步的（Shioaji 送出訂單後用 callback 通知成交，不是像現在這樣查到價格就假設成交）、現金的真相來源不一樣（真實帳戶要問券商 API，不是我們自己算的模擬帳本）。而且機械式停損/條件單「完全自動觸發、不經過人」這個設計，前提是「反正沒有真的錢」——真的要接真實下單時，這個風險胃口需要重新討論，不是介面換掉就自動安全。
+
 ## 決策依據什麼資訊——為什麼交給 react 而不是固定 prompt
 
 一開始的設計是「固定抓技術面/基本面/籌碼面數據，餵給一個專屬的小 prompt 判斷」——保證每次都不會漏查，但看到的資料範圍被寫死。討論後改成現在這樣：**候選股怎麼找是固定的（廣掃），但買賣怎麼判斷交給 react 自己決定要查什麼**（跟你直接問「台積電要不要買」用的是同一套 `run_research()`）。

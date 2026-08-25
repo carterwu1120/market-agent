@@ -5,7 +5,12 @@ tool in this project).
 
 Separate from src/agents/paper_trading.py (P&L math + evaluate_paper_trades,
 shared with the /performance command) and src/memory/paper_trading_store.py
-(the DB layer) -- this module is specifically the "do a trade" action.
+(the DB layer) -- this module is specifically the business rules (horizon/
+allocation validation, position caps, cash checks) that apply no matter how
+a trade actually gets executed. Execution itself goes through the generic
+Broker seam (src/tools/broker.py), currently backed by PaperBroker
+(src/tools/paper_broker.py) -- see docs/adr/0002-execution-backend-seam.md
+for why that split exists.
 """
 
 from __future__ import annotations
@@ -16,22 +21,24 @@ from src.agents.paper_trading import (
     calc_allocation,
     calc_pnl_pct,
     evaluate_paper_trades,
-    get_available_cash,
     simulate_portfolio_equity,
 )
 from src.config import settings
 from src.memory.paper_trading_store import (
     add_condition,
     cancel_condition,
-    close_position,
     get_active_conditions,
-    get_open_positions,
     log_event,
-    open_position,
     remove_from_watchlist,
 )
+from src.tools.broker import Broker
 from src.tools.discord_tools import send_channel_message
+from src.tools.paper_broker import PaperBroker
 from src.tools.stock_data import get_stock_price
+
+# Typed against the generic Broker seam, not PaperBroker directly -- the
+# business-rule logic below (buy()/sell()) only ever depends on that shape.
+_broker: Broker = PaperBroker()
 
 _VALID_EXIT_REASONS = {"take_profit", "stop_loss", "llm_signal"}
 _VALID_HORIZONS = {"short_term", "long_term"}
@@ -94,7 +101,7 @@ async def buy(
         horizon = "short_term"
 
     async with _trade_lock:
-        existing = [p for p in await get_open_positions() if p["symbol"] == symbol]
+        existing = [p for p in await _broker.get_positions() if p["symbol"] == symbol]
         if existing:
             return {
                 "error": f"{symbol} 已經有持有中的部位（id={existing[0]['id']}），不可重複買進"
@@ -105,7 +112,7 @@ async def buy(
             if horizon == "short_term"
             else settings.paper_trading_max_long_term_positions
         )
-        same_horizon_count = len(await get_open_positions(horizon=horizon))
+        same_horizon_count = len(await _broker.get_positions(horizon=horizon))
         if same_horizon_count >= max_positions:
             horizon_label = "短線操作" if horizon == "short_term" else "長期持有"
             return {
@@ -126,7 +133,7 @@ async def buy(
         if shares < 1:
             return {"error": f"{symbol} 股價 {price} 過高，分配額度買不到 1 股，交易取消"}
 
-        available_cash = await get_available_cash()
+        available_cash = await _broker.get_cash()
         if allocation_amount > available_cash:
             return {
                 "error": (
@@ -135,10 +142,9 @@ async def buy(
                 )
             }
 
-        position_id = await open_position(
-            symbol, price, reason, horizon, shares, allocation_amount
+        position_id = await _broker.execute_buy(
+            symbol, price, shares, allocation_amount, reason, horizon
         )
-        await remove_from_watchlist(symbol)
 
     horizon_label = "短線操作" if horizon == "short_term" else "長期持有"
     await _notify(
@@ -161,7 +167,7 @@ async def sell(symbol: str, reason: str, exit_reason: str) -> dict:
     {"error": str} on failure, or {"success": True, "symbol", "price",
     "exit_reason", "pnl_pct"}."""
     async with _trade_lock:
-        existing = [p for p in await get_open_positions() if p["symbol"] == symbol]
+        existing = [p for p in await _broker.get_positions() if p["symbol"] == symbol]
         if not existing:
             return {"error": f"{symbol} 目前沒有持有中的部位可以賣出"}
         if exit_reason not in _VALID_EXIT_REASONS:
@@ -175,7 +181,7 @@ async def sell(symbol: str, reason: str, exit_reason: str) -> dict:
             }
 
         position = existing[0]
-        await close_position(position["id"], price, exit_reason)
+        await _broker.execute_sell(position["id"], price, exit_reason)
 
     pnl = calc_pnl_pct("buy", position["entry_price"], price)
     await _notify(

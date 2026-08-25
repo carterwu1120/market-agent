@@ -249,6 +249,8 @@ market-agent/
     │   ├── web_search.py        # 開放網頁搜尋（DuckDuckGo）
     │   ├── mops_data.py         # TWSE MOPS 官方揭露（重大訊息/財報，今日快照）
     │   ├── paper_trading_actions.py # 紙上交易下單邏輯：buy/sell/set_condition（見 docs/paper_trading.md）
+    │   ├── broker.py             # Broker 介面（執行層的抽象，見 docs/adr/0002）
+    │   ├── paper_broker.py       # Broker 的模擬實作（寫進 paper_positions）
     │   └── knowledge_base.py    # 讀取 data/knowledge_base/ 檔案原文
     ├── memory/
     │   ├── store.py             # SQLite schema + connection helper
