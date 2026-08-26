@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     llm_backend: Literal["claude", "codex"] = "claude"
     codex_model: str = ""
     codex_reasoning_effort: Literal["low", "medium", "high", "xhigh"] = "medium"
+    codex_research_timeout_seconds: int = 300
 
     # Quote source used by trading execution, stop-losses, conditions, and
     # mark-to-market reporting. Historical/technical data remains on Yahoo.

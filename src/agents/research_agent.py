@@ -16,6 +16,7 @@ import re
 from loguru import logger
 
 from src.agents.report_utils import extract_conclusion
+from src.config import settings
 from src.llm import USER_FACING_TOOL_NAMES, llm_research
 from src.tools.knowledge_base import read_knowledge_base
 from src.tools.news_fetcher import _TICKER_NAMES
@@ -152,7 +153,7 @@ async def run_research(
     tool_names 預設不含紙上交易工具——一般使用者觸發的問答不該有能力下單。
     只有 paper_trading_loop.py 會明確傳入包含交易工具的完整清單。
     """
-    logger.info("ResearchAgent: starting ReAct loop (claude_code MCP backend)")
+    logger.info(f"ResearchAgent: starting ReAct loop ({settings.llm_backend} MCP backend)")
 
     history = []
     for m in (conversation_history or [])[-6:]:

@@ -222,6 +222,10 @@ CODEX_REASONING_EFFORT=medium
 
 > Claude CLI 會提供 `total_cost_usd`，可納入紙上交易的每日美元預算。Codex CLI 目前沒有等價的美元成本輸出，因此使用 Codex 時 `PAPER_TRADING_DAILY_BUDGET_USD` 無法統計 Codex 呼叫成本，程式會寫入警告而不會虛構金額。
 
+Codex 的研究呼叫會用目前虛擬環境的 Python 絕對路徑啟動本機 STDIO MCP server，
+不依賴子程序的 `uv`/`python` PATH。MCP 啟動上限為 30 秒並設為必要服務；若初始化失敗，
+該輪會明確報錯而不是在沒有研究工具的情況下繼續產生交易判斷。
+
 ## 行情來源
 
 紙上交易的買賣參考價、機械停損、條件單與持倉估值都透過

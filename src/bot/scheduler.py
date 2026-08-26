@@ -24,8 +24,7 @@ import zoneinfo
 from discord.ext import tasks
 from loguru import logger
 
-from src.agents.daily_brief import run_weekend_digest
-from src.agents.pipeline import run_agent
+from src.agents.daily_brief import run_daily_brief, run_weekend_digest
 from src.bot.discord_bot import chunk_message
 from src.config import settings
 
@@ -63,7 +62,11 @@ async def _dispatch_report(label: str, should_run: bool, skip_reason: str, gener
 
     channel = _bot.get_channel(int(settings.schedule_report_channel_id))
     if channel is None:
-        logger.error(f"Scheduler [{label}]: channel {settings.schedule_report_channel_id} not found")
+        logger.error(
+            "Scheduler [%s]: channel %s not found",
+            label,
+            settings.schedule_report_channel_id,
+        )
         return
 
     logger.info(f"Scheduler: running {label} report")
@@ -84,11 +87,10 @@ async def _send_scheduled_report(slot: str) -> None:
     is_weekday = datetime.datetime.now(_TZ).weekday() < 5
 
     async def generate():
-        return await run_agent(
-            user_message=SLOT_PROMPTS[slot],
-            user_id=settings.schedule_user_id,
-            channel_id=settings.schedule_report_channel_id,
-        )
+        # Scheduled slots are daily market briefs by definition. Sending
+        # them through the free-text intent classifier can misroute a
+        # mid-session brief into the much slower MCP ReAct loop.
+        return await run_daily_brief(SLOT_PROMPTS[slot])
 
     await _dispatch_report(slot, is_weekday, "weekend, market closed", generate)
 

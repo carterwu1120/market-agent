@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import tempfile
 from pathlib import Path
 
@@ -31,14 +32,17 @@ class CodexError(RuntimeError):
 def _mcp_overrides(tool_names: list[str]) -> list[str]:
     """Return CLI config overrides for the project's stdio MCP server."""
     allowed = ",".join(tool_names)
+    python_executable = str(Path(sys.executable).resolve())
     return [
-        f'mcp_servers.{MCP_SERVER_NAME}.command="uv"',
-        f'mcp_servers.{MCP_SERVER_NAME}.args=["run","python","-m","src.mcp_server"]',
+        f'mcp_servers.{MCP_SERVER_NAME}.command={json.dumps(python_executable)}',
+        f'mcp_servers.{MCP_SERVER_NAME}.args=["-m","src.mcp_server"]',
         f'mcp_servers.{MCP_SERVER_NAME}.cwd={json.dumps(str(PROJECT_ROOT))}',
         (
             f'mcp_servers.{MCP_SERVER_NAME}.env='
             f'{{MARKET_AGENT_MCP_ALLOWED_TOOLS={json.dumps(allowed)}}}'
         ),
+        f"mcp_servers.{MCP_SERVER_NAME}.startup_timeout_sec=30",
+        f"mcp_servers.{MCP_SERVER_NAME}.required=true",
     ]
 
 
@@ -81,17 +85,27 @@ async def _run_codex_cli(
             cwd=str(PROJECT_ROOT),
         )
         try:
+            communicate_task = asyncio.create_task(proc.communicate(prompt.encode("utf-8")))
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(prompt.encode("utf-8")), timeout=timeout
+                asyncio.shield(communicate_task), timeout=timeout
             )
         except TimeoutError:
             proc.kill()
-            await proc.wait()
-            raise CodexError(f"codex CLI timed out after {timeout}s")
+            stdout, stderr = await communicate_task
+            detail = stderr.decode(errors="replace") or stdout.decode(errors="replace")
+            detail = detail.strip()
+            if detail:
+                logger.warning(f"codex CLI timeout output: {detail[-4000:]}")
+            suffix = f"; last output: {detail[-2000:]}" if detail else ""
+            raise CodexError(f"codex CLI timed out after {timeout}s{suffix}")
 
         if proc.returncode != 0:
             detail = stderr.decode(errors="replace") or stdout.decode(errors="replace")
             raise CodexError(f"codex CLI exited {proc.returncode}: {detail[-2000:]}")
+
+        stderr_text = stderr.decode(errors="replace").strip()
+        if stderr_text:
+            logger.debug(f"codex CLI stderr: {stderr_text[-4000:]}")
 
         result = output_path.read_text(encoding="utf-8").strip()
         if not result:
@@ -133,7 +147,8 @@ async def codex_research(
         "Do not use shell commands or edit files."
     )
     logger.debug(f"codex_research: invoking CLI (prompt_len={len(prompt)})")
-    result = await _run_codex_cli(prompt, timeout, tool_names=tool_names)
+    effective_timeout = max(timeout, settings.codex_research_timeout_seconds)
+    result = await _run_codex_cli(prompt, effective_timeout, tool_names=tool_names)
     logger.warning(
         "Codex CLI does not report total_cost_usd; paper-trading USD budget accounting "
         "cannot include this call"

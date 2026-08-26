@@ -4,7 +4,7 @@ itself is discord.ext.tasks library behavior, not re-tested here.
 
 Expected behavior comes from the module docstring's own table (pre/mid/post
 skip Sat/Sun; weekend_digest fires only Sunday) -- each case asserts that on
-a "should skip" day, the expensive pipeline call (run_agent/run_weekend_digest)
+a "should skip" day, the expensive report call (run_daily_brief/run_weekend_digest)
 and the Discord send are never reached at all, not just that the return value
 looks right.
 """
@@ -44,12 +44,12 @@ async def test_weekday_report_skips_on_weekend(monkeypatch, weekend_day):
     bot, channel = _make_fake_bot()
     monkeypatch.setattr(scheduler, "_bot", bot)
     monkeypatch.setattr(scheduler.settings, "schedule_report_channel_id", "123")
-    run_agent_mock = AsyncMock()
-    monkeypatch.setattr(scheduler, "run_agent", run_agent_mock)
+    run_brief_mock = AsyncMock()
+    monkeypatch.setattr(scheduler, "run_daily_brief", run_brief_mock)
 
     await scheduler._send_scheduled_report("pre_market")
 
-    run_agent_mock.assert_not_called()
+    run_brief_mock.assert_not_called()
     channel.send.assert_not_called()
 
 
@@ -59,12 +59,12 @@ async def test_weekday_report_runs_on_a_trading_day(monkeypatch):
     bot, channel = _make_fake_bot()
     monkeypatch.setattr(scheduler, "_bot", bot)
     monkeypatch.setattr(scheduler.settings, "schedule_report_channel_id", "123")
-    run_agent_mock = AsyncMock(return_value={"final_report": "測試報告內容"})
-    monkeypatch.setattr(scheduler, "run_agent", run_agent_mock)
+    run_brief_mock = AsyncMock(return_value={"final_report": "測試報告內容"})
+    monkeypatch.setattr(scheduler, "run_daily_brief", run_brief_mock)
 
     await scheduler._send_scheduled_report("pre_market")
 
-    run_agent_mock.assert_called_once()
+    run_brief_mock.assert_awaited_once_with(scheduler.SLOT_PROMPTS["pre_market"])
     channel.send.assert_called_once_with("測試報告內容")
 
 
