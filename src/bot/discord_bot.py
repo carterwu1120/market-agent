@@ -82,6 +82,90 @@ def _is_allowed_channel(channel_id: str) -> bool:
     return not allowed or channel_id in allowed
 
 
+async def _build_paper_status_message() -> str:
+    """Build a read-only Discord snapshot without invoking an LLM."""
+    from src.agents.paper_trading import evaluate_paper_trades, simulate_portfolio_equity
+    from src.memory.paper_trading_store import get_active_conditions, get_watchlist
+
+    result = await evaluate_paper_trades()
+    equity = simulate_portfolio_equity(result["positions"])
+    watchlist = await get_watchlist()
+    conditions = await get_active_conditions()
+
+    enabled = "啟用" if settings.paper_trading_enabled else "停用"
+    lines = [
+        "**Market Agent 狀態**",
+        f"LLM：`{settings.llm_backend}`｜紙上交易：**{enabled}**",
+        (
+            f"現金：{equity['current_cash']:,.0f}｜總資產："
+            f"{equity['current_equity']:,.0f}｜累計報酬："
+            f"{equity['total_return_pct']:+.2f}%"
+        ),
+        (
+            f"持有中：{result['open_count']}｜已平倉：{result['closed_count']}｜"
+            f"已實現最大回撤：{equity['realized_max_drawdown_pct']:.2f}%"
+        ),
+        "",
+        f"**持倉（最近 {min(len(result['positions']), 10)} 筆）**",
+    ]
+    if result["positions"]:
+        for position in result["positions"][-10:]:
+            horizon = "長期" if position.get("horizon") == "long_term" else "短線"
+            status = "持有中" if position["status"] == "open" else "已平倉"
+            pnl = position.get("pnl_pct")
+            pnl_text = f"{pnl:+.2f}%" if pnl is not None else "N/A"
+            lines.append(
+                f"- {position['symbol']}｜{status}・{horizon}｜"
+                f"{position.get('shares', 0)} 股｜損益 {pnl_text}"
+            )
+    else:
+        lines.append("- 目前沒有持倉")
+
+    lines.extend(["", f"**觀察名單（{len(watchlist)} 檔）**"])
+    if watchlist:
+        lines.append("- " + "、".join(item["symbol"] for item in watchlist[:20]))
+        if len(watchlist) > 20:
+            lines.append(f"- 另有 {len(watchlist) - 20} 檔未列出")
+    else:
+        lines.append("- 空")
+
+    lines.extend(["", f"**有效條件單（{len(conditions)} 筆）**"])
+    if conditions:
+        for condition in conditions[:10]:
+            lines.append(
+                f"- #{condition['id']} {condition['symbol']}｜"
+                f"{condition['indicator']} {condition['operator']} "
+                f"{condition['threshold']} → {condition['action']}"
+            )
+        if len(conditions) > 10:
+            lines.append(f"- 另有 {len(conditions) - 10} 筆未列出")
+    else:
+        lines.append("- 無")
+    return "\n".join(lines)
+
+
+async def _build_paper_log_message(limit: int) -> str:
+    """Build the permanent paper-trading audit trail for Discord."""
+    from datetime import datetime, timedelta, timezone
+
+    from src.memory.paper_trading_store import get_recent_log
+
+    limit = max(1, min(limit, 50))
+    events = await get_recent_log(limit)
+    if not events:
+        return "目前沒有紙上交易執行紀錄。"
+
+    tw_tz = timezone(timedelta(hours=8))
+    lines = [f"**紙上交易執行紀錄（最近 {len(events)} 筆）**"]
+    for event in events:
+        timestamp = datetime.fromtimestamp(event["ts"], tz=tw_tz).strftime("%m/%d %H:%M:%S")
+        symbol = f"｜{event['symbol']}" if event.get("symbol") else ""
+        lines.append(
+            f"- `{timestamp}`｜{event['event_type']}{symbol}｜{event.get('detail') or '-'}"
+        )
+    return "\n".join(lines)
+
+
 async def _process_and_reply(
     interaction_or_message,
     user_message: str,
@@ -239,6 +323,23 @@ async def cmd_watchlist(interaction: discord.Interaction):
     await interaction.followup.send("\n".join(lines))
 
 
+@bot.tree.command(name="status", description="查看紙上交易帳戶、持倉、觀察名單與條件單")
+async def cmd_status(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+    message = await _build_paper_status_message()
+    for chunk in chunk_message(message):
+        await interaction.followup.send(chunk)
+
+
+@bot.tree.command(name="log", description="查看最近的紙上交易執行紀錄")
+@app_commands.describe(limit="顯示筆數，1 到 50，預設 20")
+async def cmd_log(interaction: discord.Interaction, limit: int = 20):
+    await interaction.response.defer(thinking=True)
+    message = await _build_paper_log_message(limit)
+    for chunk in chunk_message(message):
+        await interaction.followup.send(chunk)
+
+
 @bot.tree.command(name="help", description="顯示使用說明")
 async def cmd_help(interaction: discord.Interaction):
     help_text = (
@@ -249,6 +350,8 @@ async def cmd_help(interaction: discord.Interaction):
         "/clear          — 清除對話記憶，開始新的對話\n"
         "/performance    — 查看 agent 過去建議的紙上交易績效\n"
         "/watchlist      — 查看紙上交易目前的觀察名單\n"
+        "/status         — 查看帳戶、持倉、觀察名單與條件單\n"
+        "/log [筆數]     — 查看最近的紙上交易執行紀錄\n"
         "/help           — 顯示此說明\n"
         "```\n"
         "💡 也可以直接輸入問題，例如：\n"

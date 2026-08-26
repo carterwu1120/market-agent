@@ -133,7 +133,7 @@ flowchart TD
 
 ## 查看結果
 
-**Discord**：`/performance` 顯示持倉損益（持有中浮動、已平倉實現）跟整體勝率/平均報酬；`/watchlist` 顯示觀察名單。有真的買進/賣出時，也會直接發一則訊息到你設定的 `SCHEDULE_REPORT_CHANNEL_ID` 頻道。
+**Discord**：`/performance` 顯示持倉損益（持有中浮動、已平倉實現）跟整體勝率/平均報酬；`/watchlist` 顯示觀察名單；`/status` 一次顯示 backend、紙上交易開關、現金、資產、持倉、觀察名單與條件單；`/log [筆數]` 顯示最近 1–50 筆永久稽核紀錄。這些都是唯讀查詢，不會呼叫 LLM。有真的買進/賣出時，也會直接發一則訊息到你設定的 `SCHEDULE_REPORT_CHANNEL_ID` 頻道。
 
 **終端面板（不需要 Discord）**：`uv run python -m src.cli` 進去之後打 `/status`，一次看到：
 

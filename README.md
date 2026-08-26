@@ -139,6 +139,9 @@ uv run python -m src.main
 | `/brief` | 今日市場摘要與投資建議 |
 | `/stock 2330 2454` | 分析指定股票 |
 | `/performance` | 查看紙上交易迴圈的持倉與損益（見 [`docs/paper_trading.md`](docs/paper_trading.md)）|
+| `/watchlist` | 查看目前仍在追蹤、尚未買進的股票 |
+| `/status` | 紙上交易唯讀總覽：backend、現金、資產、持倉、觀察名單與條件單 |
+| `/log [筆數]` | 查看最近 1–50 筆紙上交易執行紀錄，預設 20 筆 |
 | `/clear` | 清除對話記憶 |
 | `/help` | 顯示說明 |
 | 群組頻道：@bot 問話 | 自由對話模式（支援跨使用者 follow-up）|
