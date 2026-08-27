@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src import llm, llm_codex
-from src.llm_codex import CodexError, _mcp_overrides, _run_codex_cli
+from src.llm_codex import CodexError, _codex_command, _mcp_overrides, _run_codex_cli
 
 
 @pytest.mark.asyncio
@@ -42,6 +42,40 @@ def test_codex_mcp_overrides_start_project_server():
     assert any("startup_timeout_sec=30" in item for item in overrides)
     assert any("required=true" in item for item in overrides)
     assert not any('command="uv"' in item for item in overrides)
+
+
+def test_codex_command_uses_windows_cmd_for_npm_shim(monkeypatch):
+    monkeypatch.setattr(llm_codex.shutil, "which", lambda _: r"C:\npm\codex.CMD")
+    monkeypatch.setattr(llm_codex, "_native_codex_from_npm_shim", lambda _: None)
+    monkeypatch.setattr(llm_codex.sys, "platform", "win32")
+    monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
+
+    command = _codex_command(["exec", "--version"])
+
+    assert command[:4] == [
+        r"C:\Windows\System32\cmd.exe",
+        "/d",
+        "/s",
+        "/c",
+    ]
+    assert "codex.CMD" in command[4]
+    assert "--version" in command[4]
+
+
+def test_codex_command_prefers_native_executable_behind_npm_shim(monkeypatch):
+    native = Path(r"C:\npm\node_modules\@openai\codex\vendor\bin\codex.exe")
+    monkeypatch.setattr(llm_codex.shutil, "which", lambda _: r"C:\npm\codex.CMD")
+    monkeypatch.setattr(llm_codex.sys, "platform", "win32")
+    monkeypatch.setattr(llm_codex, "_native_codex_from_npm_shim", lambda _: native)
+
+    assert _codex_command(["--version"]) == [str(native), "--version"]
+
+
+def test_codex_command_reports_missing_cli(monkeypatch):
+    monkeypatch.setattr(llm_codex.shutil, "which", lambda _: None)
+
+    with pytest.raises(CodexError, match="not found on PATH"):
+        _codex_command(["exec"])
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -27,6 +30,34 @@ MCP_SERVER_NAME = "market_agent_tools"
 
 class CodexError(RuntimeError):
     pass
+
+
+def _native_codex_from_npm_shim(shim: Path) -> Path | None:
+    """Find the native executable installed behind npm's ``codex.cmd``."""
+    package_root = shim.parent / "node_modules" / "@openai" / "codex" / "node_modules" / "@openai"
+    candidates = package_root.glob("codex-win32-*/vendor/*/bin/codex.exe")
+    return next((path for path in candidates if path.is_file()), None)
+
+
+def _codex_command(cli_args: list[str]) -> list[str]:
+    """Resolve the Codex CLI, including npm's Windows ``codex.cmd`` shim."""
+    executable = shutil.which(CODEX_BIN)
+    if not executable:
+        raise CodexError(
+            "Codex CLI not found on PATH; install it and restart the terminal before "
+            "starting Market Agent"
+        )
+
+    if sys.platform == "win32" and Path(executable).suffix.lower() in {".cmd", ".bat"}:
+        native_executable = _native_codex_from_npm_shim(Path(executable))
+        if native_executable:
+            return [str(native_executable), *cli_args]
+
+        comspec = os.environ.get("COMSPEC", "cmd.exe")
+        command_line = subprocess.list2cmdline([executable, *cli_args])
+        return [comspec, "/d", "/s", "/c", command_line]
+
+    return [executable, *cli_args]
 
 
 def _mcp_overrides(tool_names: list[str]) -> list[str]:
@@ -56,8 +87,7 @@ async def _run_codex_cli(
     with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as output_file:
         output_path = Path(output_file.name)
 
-    cmd = [
-        CODEX_BIN,
+    cli_args = [
         "exec",
         "-",
         "--ephemeral",
@@ -70,11 +100,15 @@ async def _run_codex_cli(
         str(PROJECT_ROOT),
     ]
     if settings.codex_model:
-        cmd += ["--model", settings.codex_model]
-    cmd += ["-c", f'model_reasoning_effort="{settings.codex_reasoning_effort}"']
+        cli_args += ["--model", settings.codex_model]
+    # A TOML literal string survives the Windows cmd/npm shim fallback without
+    # cmd.exe turning escaped double quotes into part of the setting's value.
+    cli_args += ["-c", f"model_reasoning_effort='{settings.codex_reasoning_effort}'"]
     if tool_names is not None:
         for override in _mcp_overrides(tool_names):
-            cmd += ["-c", override]
+            cli_args += ["-c", override]
+
+    cmd = _codex_command(cli_args)
 
     try:
         proc = await asyncio.create_subprocess_exec(
