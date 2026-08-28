@@ -81,6 +81,7 @@ _TW_TZ = timezone(timedelta(hours=8))
 BROAD_SCAN_INTERVAL = 40 * 60
 TIGHT_SCAN_INTERVAL = 30 * 60
 WATCHLIST_TTL = 5 * 60 * 60  # safety net only -- see module docstring
+WATCHLIST_RESEARCH_BATCH_SIZE = 3
 TICK_SECONDS = 60
 _TRADING_START = dtime(9, 0)
 _TRADING_END = dtime(13, 30)
@@ -99,6 +100,22 @@ def _tw_now() -> datetime:
 
 def _is_trading_hours(now: datetime) -> bool:
     return now.weekday() < 5 and _TRADING_START <= now.time() <= _TRADING_END
+
+
+def _select_due_watchlist(watchlist: list[dict], now_ts: float) -> tuple[list[str], int]:
+    """Return one fair research batch and the number left for later cycles.
+
+    Entries checked least recently go first; ``first_seen`` breaks ties so a
+    growing watchlist cannot starve older candidates indefinitely.
+    """
+    due = [
+        item
+        for item in watchlist
+        if now_ts - item["last_checked"] >= TIGHT_SCAN_INTERVAL
+    ]
+    due.sort(key=lambda item: (item["last_checked"], item["first_seen"]))
+    selected = due[:WATCHLIST_RESEARCH_BATCH_SIZE]
+    return [item["symbol"] for item in selected], max(0, len(due) - len(selected))
 
 
 def _next_session_start(now: datetime) -> datetime:
@@ -373,9 +390,7 @@ async def _tight_scan() -> None:
     watchlist = await get_watchlist()
     short_term_positions = await get_open_positions(horizon="short_term")
 
-    due_watchlist = [
-        w["symbol"] for w in watchlist if now_ts - w["last_checked"] >= TIGHT_SCAN_INTERVAL
-    ]
+    due_watchlist, queued_watchlist_count = _select_due_watchlist(watchlist, now_ts)
     if not due_watchlist and not short_term_positions:
         return
 
@@ -385,7 +400,7 @@ async def _tight_scan() -> None:
 
     logger.info(
         f"paper_trading_loop: tight scan — {len(due_watchlist)} watchlist due, "
-        f"{len(short_term_positions)} short-term positions"
+        f"{queued_watchlist_count} queued, {len(short_term_positions)} short-term positions"
     )
 
     watchlist_lines = [f"- {s}" for s in due_watchlist] or ["（無）"]
@@ -404,6 +419,9 @@ async def _tight_scan() -> None:
         "若判斷某支股票不用再追蹤了，請呼叫 watchlist_drop 移除。\n\n"
         "觀察名單（尚未持有，值得留意的候選股）：\n" + "\n".join(watchlist_lines) + "\n\n"
         "目前短線持有中部位：\n" + "\n".join(position_lines) + condition_block
+        + "\n\n本輪每一檔觀察標的都必須做出明確處置：符合條件就買進；"
+        "仍值得等待就設定可機械執行的具體條件單；已不值得追蹤就移出觀察名單。"
+        "不得只回答『繼續觀察』而不採取上述任何一項動作。"
     )
 
     try:
@@ -421,11 +439,17 @@ async def _tight_scan() -> None:
         logger.info(f"paper_trading_loop: cycle conclusion — {conclusion}")
         await log_event(
             "tight_scan",
-            f"{len(due_watchlist)} watchlist due, {len(short_term_positions)} "
+            f"{len(due_watchlist)} watchlist checked, {queued_watchlist_count} queued, "
+            f"{len(short_term_positions)} "
             f"short-term positions — {conclusion}",
         )
     except Exception as exc:
         logger.warning(f"paper_trading_loop: research call failed: {exc}")
+        detail = (
+            f"symbols={','.join(due_watchlist)}; queued={queued_watchlist_count}; "
+            f"error={str(exc)[:500]}"
+        )
+        await log_event("research_failed", detail)
         return
 
     # Only touch symbols still actually on the watchlist -- a buy or a

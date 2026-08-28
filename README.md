@@ -176,6 +176,8 @@ PAPER_TRADING_ENABLED=true
 
 啟動後在交易時間內（週一~五 09:00-13:30）自動背景運作，用 `/performance` 查看目前持倉與績效。不需要額外的帳號或憑證——完整運作方式見 [`docs/paper_trading.md`](docs/paper_trading.md)。
 
+為避免一次研究整份觀察名單造成 MCP timeout，緊盯循環每輪最多研究 3 檔並公平輪詢；失敗會記錄成 `research_failed`，可用 `/log` 查看。
+
 ---
 
 ## 本地 CLI 測試（不需要 Discord）
