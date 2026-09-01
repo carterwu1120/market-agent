@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.config import settings
-from src.memory.paper_trading_store import open_position
+from src.memory.paper_trading_store import close_position, open_position
 from src.memory.store import init_storage
 from src.tools import paper_trading_actions as actions
 
@@ -42,7 +42,12 @@ async def test_status_with_position_watchlist_and_condition_does_not_crash(monke
     # reference to the same function at import time.
     monkeypatch.setattr(market_data_module, "get_quote", AsyncMock(return_value=_PRICE_OK))
     monkeypatch.setattr(paper_trading_module, "get_quote", AsyncMock(return_value=_PRICE_OK))
-    await open_position("2330.TW", entry_price=100.0, horizon="short_term", shares=10)
+    closed_id = await open_position(
+        "2330.TW", entry_price=100.0, horizon="short_term", shares=10
+    )
+    assert closed_id is not None
+    await close_position(closed_id, 99.0, "test")
+    await open_position("2382.TW", entry_price=100.0, horizon="short_term", shares=10)
     await actions.set_condition("2454.TW", "close", "lt", 50.0, "buy")
 
     from src.memory.paper_trading_store import add_to_watchlist

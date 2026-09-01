@@ -105,21 +105,36 @@ async def _build_paper_status_message() -> str:
             f"持有中：{result['open_count']}｜已平倉：{result['closed_count']}｜"
             f"已實現最大回撤：{equity['realized_max_drawdown_pct']:.2f}%"
         ),
-        "",
-        f"**持倉（最近 {min(len(result['positions']), 10)} 筆）**",
     ]
-    if result["positions"]:
-        for position in result["positions"][-10:]:
+
+    open_positions = [p for p in result["positions"] if p["status"] == "open"]
+    closed_positions = [p for p in result["positions"] if p["status"] == "closed"]
+
+    lines.extend(["", f"**目前持倉（{len(open_positions)} 筆）**"])
+    if open_positions:
+        for position in open_positions[-10:]:
             horizon = "長期" if position.get("horizon") == "long_term" else "短線"
-            status = "持有中" if position["status"] == "open" else "已平倉"
             pnl = position.get("pnl_pct")
             pnl_text = f"{pnl:+.2f}%" if pnl is not None else "N/A"
             lines.append(
-                f"- {position['symbol']}｜{status}・{horizon}｜"
-                f"{position.get('shares', 0)} 股｜損益 {pnl_text}"
+                f"- {position['symbol']}｜{horizon}｜"
+                f"{position.get('shares', 0)} 股｜未實現損益 {pnl_text}"
             )
     else:
         lines.append("- 目前沒有持倉")
+
+    lines.extend(["", f"**最近已平倉（{min(len(closed_positions), 10)} 筆）**"])
+    if closed_positions:
+        for position in closed_positions[-10:]:
+            horizon = "長期" if position.get("horizon") == "long_term" else "短線"
+            pnl = position.get("pnl_pct")
+            pnl_text = f"{pnl:+.2f}%" if pnl is not None else "N/A"
+            lines.append(
+                f"- {position['symbol']}｜{horizon}｜"
+                f"{position.get('shares', 0)} 股｜已實現損益 {pnl_text}"
+            )
+    else:
+        lines.append("- 尚無已平倉交易")
 
     lines.extend(["", f"**觀察名單（{len(watchlist)} 檔）**"])
     if watchlist:

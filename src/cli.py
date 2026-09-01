@@ -78,22 +78,38 @@ async def _print_status() -> None:
         f"已平倉最大回撤：{eq['realized_max_drawdown_pct']}%"
     )
 
-    if result["positions"]:
-        table = Table(title="持倉")
-        for col in ("股票", "狀態", "類型", "股數", "進場價", "現價/出場價", "損益%"):
+    open_positions = [p for p in result["positions"] if p["status"] == "open"]
+    closed_positions = [p for p in result["positions"] if p["status"] == "closed"]
+
+    if open_positions:
+        table = Table(title="目前持倉")
+        for col in ("股票", "類型", "股數", "進場價", "現價", "未實現損益%"):
             table.add_column(col)
-        for p in result["positions"]:
+        for p in open_positions:
             horizon_label = "長期" if p.get("horizon") == "long_term" else "短線"
-            status_label = "持有中" if p["status"] == "open" else "已平倉"
             pnl = f"{p['pnl_pct']:+.2f}%" if p["pnl_pct"] is not None else "N/A"
             style = _pnl_style(p["pnl_pct"])
             table.add_row(
-                p["symbol"], status_label, horizon_label, str(p.get("shares", 0)),
+                p["symbol"], horizon_label, str(p.get("shares", 0)),
                 str(p["entry_price"]), str(p["current_price"]), f"[{style}]{pnl}[/{style}]",
             )
         console.print(table)
     else:
-        console.print("[dim]目前沒有任何持倉[/dim]")
+        console.print("[dim]目前沒有持倉[/dim]")
+
+    if closed_positions:
+        table = Table(title="最近已平倉")
+        for col in ("股票", "類型", "股數", "進場價", "出場價", "已實現損益%"):
+            table.add_column(col)
+        for p in closed_positions[-10:]:
+            horizon_label = "長期" if p.get("horizon") == "long_term" else "短線"
+            pnl = f"{p['pnl_pct']:+.2f}%" if p["pnl_pct"] is not None else "N/A"
+            style = _pnl_style(p["pnl_pct"])
+            table.add_row(
+                p["symbol"], horizon_label, str(p.get("shares", 0)),
+                str(p["entry_price"]), str(p["current_price"]), f"[{style}]{pnl}[/{style}]",
+            )
+        console.print(table)
 
     watchlist = await get_watchlist()
     if watchlist:
