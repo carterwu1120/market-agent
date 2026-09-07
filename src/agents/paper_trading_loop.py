@@ -2,13 +2,9 @@
 same process as the Discord bot (see discord_bot.py's setup_hook, gated by
 settings.paper_trading_enabled), watching the market during trading hours.
 
-Candidate discovery is deterministic (same reasoning as daily_brief: this
-runs unattended, so finding *what's worth looking at* must not depend on
-the LLM remembering to check). The actual buy/sell/watch *decision* is
-delegated to the same react agent (src/agents/research_agent.py) used for
-free-form questions, via the paper_trade_status/buy/sell/watchlist_drop
-MCP tools -- Claude decides for itself which data it wants to check
-before acting, the same way it would for a user-asked question.
+Candidate discovery and market-data collection are deterministic. Background
+decisions use a bounded two-symbol packet and one structured LLM call; the
+open-ended ReAct/MCP loop is reserved for user-initiated Discord research.
 
 Two position horizons, not just one undifferentiated bucket (per
 discussion): a short_term position stays in the tight 30-minute loop so
@@ -39,9 +35,8 @@ from loguru import logger
 from src.agents.daily_brief import _fetch_news
 from src.agents.market_agent import _extract_hot_stocks
 from src.agents.paper_trading import calc_pnl_pct
-from src.agents.research_agent import PAPER_TRADING_SYSTEM, run_research
+from src.agents.paper_trading_decision import run_paper_decision
 from src.config import settings
-from src.llm import PAPER_TRADING_TOOL_NAMES
 from src.memory.paper_trading_store import (
     add_to_watchlist,
     expire_watchlist,
@@ -81,7 +76,7 @@ _TW_TZ = timezone(timedelta(hours=8))
 BROAD_SCAN_INTERVAL = 40 * 60
 TIGHT_SCAN_INTERVAL = 30 * 60
 WATCHLIST_TTL = 5 * 60 * 60  # safety net only -- see module docstring
-WATCHLIST_RESEARCH_BATCH_SIZE = 3
+DECISION_BATCH_SIZE = 2
 TICK_SECONDS = 60
 _TRADING_START = dtime(9, 0)
 _TRADING_END = dtime(13, 30)
@@ -92,6 +87,9 @@ _TRADING_END = dtime(13, 30)
 _daily_cost_usd = 0.0
 _daily_cost_date = None
 _budget_notified = False
+_daily_llm_calls = 0
+_daily_timeouts = 0
+_position_last_checked: dict[str, float] = {}
 
 
 def _tw_now() -> datetime:
@@ -102,7 +100,9 @@ def _is_trading_hours(now: datetime) -> bool:
     return now.weekday() < 5 and _TRADING_START <= now.time() <= _TRADING_END
 
 
-def _select_due_watchlist(watchlist: list[dict], now_ts: float) -> tuple[list[str], int]:
+def _select_due_watchlist(
+    watchlist: list[dict], now_ts: float, limit: int = DECISION_BATCH_SIZE
+) -> tuple[list[str], int]:
     """Return one fair research batch and the number left for later cycles.
 
     Entries checked least recently go first; ``first_seen`` breaks ties so a
@@ -114,8 +114,41 @@ def _select_due_watchlist(watchlist: list[dict], now_ts: float) -> tuple[list[st
         if now_ts - item["last_checked"] >= TIGHT_SCAN_INTERVAL
     ]
     due.sort(key=lambda item: (item["last_checked"], item["first_seen"]))
-    selected = due[:WATCHLIST_RESEARCH_BATCH_SIZE]
+    selected = due[:limit]
     return [item["symbol"] for item in selected], max(0, len(due) - len(selected))
+
+
+def _select_positions(positions: list[dict], limit: int) -> list[dict]:
+    """Fair in-memory rotation for open positions; oldest review goes first."""
+    return sorted(
+        positions,
+        key=lambda item: (_position_last_checked.get(item["symbol"], 0.0), item["created_at"]),
+    )[:limit]
+
+
+def _build_targets(
+    watchlist: list[dict], positions: list[dict], now_ts: float
+) -> tuple[list[dict], int]:
+    """Use one slot per role first, then fill any spare slot from the other role."""
+    position_batch = _select_positions(positions, 1) if positions else []
+    watch_limit = DECISION_BATCH_SIZE - len(position_batch)
+    due_watchlist, queued = _select_due_watchlist(watchlist, now_ts, watch_limit)
+    if len(due_watchlist) < watch_limit and positions:
+        position_batch = _select_positions(positions, DECISION_BATCH_SIZE - len(due_watchlist))
+
+    targets = [
+        {"symbol": symbol, "role": "watchlist"}
+        for symbol in due_watchlist
+    ]
+    targets.extend(
+        {
+            "symbol": position["symbol"],
+            "role": "position",
+            "position": position,
+        }
+        for position in position_batch
+    )
+    return targets, queued
 
 
 def _next_session_start(now: datetime) -> datetime:
@@ -135,18 +168,87 @@ def _reset_cost_if_new_day(now: datetime) -> None:
     only reset inside _budget_exceeded() silently accumulated cost against
     a stale day if _track_cost() ever ran first."""
     global _daily_cost_usd, _daily_cost_date, _budget_notified
+    global _daily_llm_calls, _daily_timeouts
     today = now.date()
     if _daily_cost_date != today:
         _daily_cost_usd = 0.0
         _daily_cost_date = today
         _budget_notified = False
+        _daily_llm_calls = 0
+        _daily_timeouts = 0
 
 
 def _budget_exceeded(now: datetime) -> bool:
     """Reports whether today's cumulative run_research() cost has hit the
     configured cap."""
     _reset_cost_if_new_day(now)
-    return _daily_cost_usd >= settings.paper_trading_daily_budget_usd
+    return (
+        _daily_cost_usd >= settings.paper_trading_daily_budget_usd
+        or _daily_llm_calls >= settings.paper_trading_max_llm_calls_per_day
+        or _daily_timeouts >= settings.paper_trading_max_timeouts_per_day
+    )
+
+
+def _decision_limit_reason(now: datetime) -> str:
+    _reset_cost_if_new_day(now)
+    if _daily_timeouts >= settings.paper_trading_max_timeouts_per_day:
+        return f"timeouts {_daily_timeouts}/{settings.paper_trading_max_timeouts_per_day}"
+    if _daily_llm_calls >= settings.paper_trading_max_llm_calls_per_day:
+        return f"calls {_daily_llm_calls}/{settings.paper_trading_max_llm_calls_per_day}"
+    if _daily_cost_usd >= settings.paper_trading_daily_budget_usd:
+        return f"cost ${_daily_cost_usd:.2f}/${settings.paper_trading_daily_budget_usd:.2f}"
+    return ""
+
+
+async def _notify_decision_limit(reason: str) -> None:
+    global _budget_notified
+    if not reason or _budget_notified:
+        return
+    _budget_notified = True
+    message = f"紙上交易決策今日已暫停（{reason}）；機械停損與條件單仍會執行。"
+    logger.warning("paper_trading_loop: {}", message)
+    if settings.schedule_report_channel_id:
+        await send_channel_message(settings.schedule_report_channel_id, f"⚠️ {message}")
+    await log_event("budget_exceeded", message)
+
+
+def _record_llm_call() -> None:
+    global _daily_llm_calls
+    _reset_cost_if_new_day(_tw_now())
+    _daily_llm_calls += 1
+
+
+def _record_llm_failure(error: Exception) -> None:
+    global _daily_timeouts
+    _reset_cost_if_new_day(_tw_now())
+    if "timeout" in str(error).lower() or "timed out" in str(error).lower():
+        _daily_timeouts += 1
+
+
+def _decision_summary(result: dict) -> str:
+    parts = []
+    for item in result.get("results", []):
+        suffix = f" error={item['error']}" if item.get("error") else ""
+        parts.append(f"{item.get('symbol')}:{item.get('action')}{suffix}")
+    return ", ".join(parts) or "no valid decisions"
+
+
+def _attach_conditions(targets: list[dict], conditions: list[dict]) -> None:
+    by_symbol: dict[str, list[dict]] = {}
+    for condition in conditions:
+        by_symbol.setdefault(condition["symbol"], []).append(condition)
+    for target in targets:
+        target["conditions"] = by_symbol.get(target["symbol"], [])
+
+
+def _defer_failed_targets(targets: list[dict], now_ts: float) -> tuple[list[str], list[str]]:
+    cooldown = settings.paper_trading_failure_cooldown_seconds
+    retry_marker = now_ts + max(0, cooldown - TIGHT_SCAN_INTERVAL)
+    watch_symbols = [t["symbol"] for t in targets if t["role"] == "watchlist"]
+    position_symbols = [t["symbol"] for t in targets if t["role"] == "position"]
+    for symbol in position_symbols:
+        _position_last_checked[symbol] = retry_marker
+    return watch_symbols, position_symbols
 
 
 async def _track_cost(cost_usd: float) -> None:
@@ -288,30 +390,6 @@ async def _check_conditions() -> None:
                 )
 
 
-async def _relevant_conditions_block(symbols: set[str]) -> str:
-    """Formats active conditions scoped to the given symbols for inclusion
-    in a review prompt, so the agent is reminded of a condition it set
-    earlier every cycle -- instead of it only resurfacing by the agent
-    happening to call paper_trade_status on its own initiative. Lets the
-    agent notice a condition no longer makes sense (e.g. new news changed
-    the setup) and cancel/replace it, rather than it silently waiting to
-    fire on stale reasoning. Returns "" when there's nothing relevant."""
-    conditions = await get_active_conditions()
-    relevant = [c for c in conditions if c["symbol"] in symbols]
-    if not relevant:
-        return ""
-    lines = [
-        f"- id={c['id']}：{c['symbol']} {c['indicator']} {c['operator']} "
-        f"{c['threshold']} → {c['action']}"
-        for c in relevant
-    ]
-    return (
-        "\n\n你之前設定、還沒觸發的條件單（如果情況已經改變、不再適用，"
-        "請呼叫 paper_trade_cancel_condition 取消，需要的話可以用 "
-        "paper_trade_set_condition 重新設定）：\n" + "\n".join(lines)
-    )
-
-
 async def _broad_scan() -> None:
     """Every BROAD_SCAN_INTERVAL: (1) discover new watchlist candidates from
     news, (2) sweep the watchlist's mechanical safety-net expiry, (3) give
@@ -351,34 +429,35 @@ async def _review_long_term_positions() -> None:
     if not long_term:
         return
 
-    if _budget_exceeded(_tw_now()):
-        logger.info("paper_trading_loop: long-term review skipped, daily budget exceeded")
+    limit_reason = _decision_limit_reason(_tw_now())
+    if limit_reason:
+        await _notify_decision_limit(limit_reason)
+        logger.info("paper_trading_loop: long-term review skipped, decision limit reached")
         return
 
-    logger.info(f"paper_trading_loop: reviewing {len(long_term)} long-term position(s)")
-    position_lines = [
-        f"- {p['symbol']}（進場 {p['entry_price']}，{p['entry_date']}，長期持有）"
-        for p in long_term
+    selected = _select_positions(long_term, DECISION_BATCH_SIZE)
+    targets = [
+        {"symbol": position["symbol"], "role": "position", "position": position}
+        for position in selected
     ]
-    condition_block = await _relevant_conditions_block({p["symbol"] for p in long_term})
-    prompt = (
-        "這是長期持有部位的例行檢視（較低頻率，每次廣掃才會問一次，不是每 30 分鐘）。"
-        "請檢查以下長期部位，只有在有明確理由時才考慮賣出，否則維持長期持有的初衷，"
-        "不需要因為短線波動就出場。務必實際查證真實數據後再決定。\n\n"
-        "目前長期持有部位：\n" + "\n".join(position_lines) + condition_block
+    _attach_conditions(targets, await get_active_conditions())
+    logger.info(
+        "paper_trading_loop: reviewing {} of {} long-term position(s)",
+        len(targets),
+        len(long_term),
     )
     try:
-        result = await run_research(
-            prompt,
-            [],
-            tool_names=PAPER_TRADING_TOOL_NAMES,
-            system_prompt=PAPER_TRADING_SYSTEM,
-        )
+        _record_llm_call()
+        result = await run_paper_decision(targets)
         await _track_cost(result.get("cost_usd", 0.0))
-        conclusion = result.get("conclusion", "")
+        conclusion = _decision_summary(result)
+        for target in targets:
+            _position_last_checked[target["symbol"]] = _tw_now().timestamp()
         logger.info(f"paper_trading_loop: long-term review conclusion — {conclusion}")
         await log_event("long_term_review", conclusion)
     except Exception as exc:
+        _record_llm_failure(exc)
+        _defer_failed_targets(targets, _tw_now().timestamp())
         logger.warning(f"paper_trading_loop: long-term review failed: {exc}")
 
 
@@ -390,72 +469,65 @@ async def _tight_scan() -> None:
     watchlist = await get_watchlist()
     short_term_positions = await get_open_positions(horizon="short_term")
 
-    due_watchlist, queued_watchlist_count = _select_due_watchlist(watchlist, now_ts)
-    if not due_watchlist and not short_term_positions:
+    targets, queued_watchlist_count = _build_targets(watchlist, short_term_positions, now_ts)
+    if not targets:
         return
 
-    if _budget_exceeded(_tw_now()):
-        logger.info("paper_trading_loop: tight scan skipped, daily budget exceeded")
+    limit_reason = _decision_limit_reason(_tw_now())
+    if limit_reason:
+        await _notify_decision_limit(limit_reason)
+        logger.info("paper_trading_loop: tight scan skipped, decision limit reached")
         return
 
     logger.info(
-        f"paper_trading_loop: tight scan — {len(due_watchlist)} watchlist due, "
-        f"{queued_watchlist_count} queued, {len(short_term_positions)} short-term positions"
+        "paper_trading_loop: tight scan — {} target(s), {} watchlist queued, "
+        "{} short-term positions total",
+        len(targets),
+        queued_watchlist_count,
+        len(short_term_positions),
     )
-
-    watchlist_lines = [f"- {s}" for s in due_watchlist] or ["（無）"]
-    position_lines = [
-        f"- {p['symbol']}（進場 {p['entry_price']}，{p['entry_date']}）"
-        for p in short_term_positions
-    ] or ["（無）"]
-    condition_block = await _relevant_conditions_block(
-        set(due_watchlist) | {p["symbol"] for p in short_term_positions}
-    )
-
-    prompt = (
-        "現在是台股交易時段，這是紙上交易（模擬帳戶）短線操作的例行檢查。請檢查以下清單，"
-        "自行判斷是否要對其中任何股票採取行動（買進、賣出、或都不動作）。"
-        "務必實際呼叫工具查證真實數據後再決定，不要只憑下方名單文字判斷。"
-        "若判斷某支股票不用再追蹤了，請呼叫 watchlist_drop 移除。\n\n"
-        "觀察名單（尚未持有，值得留意的候選股）：\n" + "\n".join(watchlist_lines) + "\n\n"
-        "目前短線持有中部位：\n" + "\n".join(position_lines) + condition_block
-        + "\n\n本輪每一檔觀察標的都必須做出明確處置：符合條件就買進；"
-        "仍值得等待就設定可機械執行的具體條件單；已不值得追蹤就移出觀察名單。"
-        "不得只回答『繼續觀察』而不採取上述任何一項動作。"
-    )
+    _attach_conditions(targets, await get_active_conditions())
 
     try:
-        # Only this call site (and _review_long_term_positions) opts into the
-        # Trading research tools include sector/theme and all required market
-        # checks, but deliberately exclude unrelated Discord/Gmail tools.
-        result = await run_research(
-            prompt,
-            [],
-            tool_names=PAPER_TRADING_TOOL_NAMES,
-            system_prompt=PAPER_TRADING_SYSTEM,
-        )
+        _record_llm_call()
+        result = await run_paper_decision(targets)
         await _track_cost(result.get("cost_usd", 0.0))
-        conclusion = result.get("conclusion", "")
+        conclusion = _decision_summary(result)
         logger.info(f"paper_trading_loop: cycle conclusion — {conclusion}")
         await log_event(
             "tight_scan",
-            f"{len(due_watchlist)} watchlist checked, {queued_watchlist_count} queued, "
-            f"{len(short_term_positions)} "
-            f"short-term positions — {conclusion}",
+            f"{len(targets)} targets checked, {queued_watchlist_count} watchlist queued — "
+            f"{conclusion}",
         )
     except Exception as exc:
+        _record_llm_failure(exc)
+        failed_watchlist, _ = _defer_failed_targets(targets, now_ts)
+        if failed_watchlist:
+            await touch_watchlist(
+                failed_watchlist,
+                now_ts + max(
+                    0,
+                    settings.paper_trading_failure_cooldown_seconds - TIGHT_SCAN_INTERVAL,
+                ),
+            )
         logger.warning(f"paper_trading_loop: research call failed: {exc}")
         detail = (
-            f"symbols={','.join(due_watchlist)}; queued={queued_watchlist_count}; "
+            f"symbols={','.join(target['symbol'] for target in targets)}; "
+            f"queued={queued_watchlist_count}; "
             f"error={str(exc)[:500]}"
         )
         await log_event("research_failed", detail)
         return
 
-    # Only touch symbols still actually on the watchlist -- a buy or a
-    # watchlist_drop during this cycle already removed them from the DB.
+    for target in targets:
+        if target["role"] == "position":
+            _position_last_checked[target["symbol"]] = now_ts
     remaining = {w["symbol"] for w in await get_watchlist()}
-    still_due = [s for s in due_watchlist if s in remaining]
+    still_due = [
+        target["symbol"]
+        for target in targets
+        if target["role"] == "watchlist" and target["symbol"] in remaining
+    ]
     await touch_watchlist(still_due, now_ts)
 
 

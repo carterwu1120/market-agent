@@ -15,18 +15,17 @@ flowchart TD
     end
 
     PTL --> BROAD["廣掃\n_fetch_news + _extract_hot_stocks\n（跟 /brief 選熱門股同一套邏輯）"]
-    PTL --> TIGHT["緊盯\nrun_research()"]
-
-    TIGHT --> REACT["react agent\n（跟 /stock 完全同一套大腦）"]
-    BOT -.->|"/stock 問題也走這裡"| REACT
-    REACT -->|自主選擇要查什麼| TOOLS["MCP 工具（20 個）\ntechnical_analysis · company_announcements ·\npaper_trade_buy · paper_trade_sell · paper_trade_status · watchlist_drop ·\npaper_trade_set_condition · paper_trade_cancel_condition · ..."]
-
-    TOOLS --> SQLITE[("SQLite\ndata/market_agent.db")]
+    PTL --> TIGHT["緊盯\n每輪最多兩個目標"]
+    TIGHT --> PACKET["固定並行資料收集\n技術 · 基本 · 籌碼 · 公告 · 新聞"]
+    PACKET --> DECIDE["單次 LLM JSON 決策"]
+    DECIDE --> GUARD["程式驗證範圍與風控"]
+    GUARD --> SQLITE[("PaperBroker / SQLite\ndata/market_agent.db")]
+    BOT -.->|"自由提問"| REACT["ReAct + MCP\n僅供 Discord 研究"]
     BOT --> SQLITE
     SCHED --> SQLITE
 ```
 
-之後如果要正式上線自動交易，只要把 `PAPER_TRADING_ENABLED` 關掉，核心的查股票/`/brief`/`/stock` 功能完全不受影響——這是特意這樣設計的：`paper_trading_loop.py` 是獨立模組，跟 `/brief` 那條固定抓取路徑不共用 prompt、不共用觸發時機；跟 `/stock` 用的則是**同一套** react 大腦，只是多了六個工具可以用（`paper_trade_status/buy/sell`、`watchlist_drop`、`paper_trade_set_condition/cancel_condition`）。
+之後如果要正式上線自動交易，只要把 `PAPER_TRADING_ENABLED` 關掉，核心的查股票、`/brief`、`/stock` 功能完全不受影響。背景交易使用獨立的 `paper_trading_decision.py`，Discord 自由提問才使用 ReAct；兩者共用資料函式與 Broker 業務規則，但不共用執行流程。
 
 真正要留意的 trade-off：因為現在共用同一個 process，紙上交易迴圈如果哪天真的丟出沒接住的例外把整個 process 弄掛，Discord bot 也會跟著死掉（反之亦然）。`run()` 已經把每個週期包在 try/except 裡、錯誤只會被記錄不會往外炸，風險不高，但這是唯一真的要拿來換的東西。
 
@@ -36,36 +35,30 @@ flowchart TD
 
 但這不代表「換一個 class 就能無痛切換成真的下單」——`docs/adr/0002-execution-backend-seam.md` 記錄了兩個目前刻意先不解決的落差：真實下單是非同步的（Shioaji 送出訂單後用 callback 通知成交，不是像現在這樣查到價格就假設成交）、現金的真相來源不一樣（真實帳戶要問券商 API，不是我們自己算的模擬帳本）。而且機械式停損/條件單「完全自動觸發、不經過人」這個設計，前提是「反正沒有真的錢」——真的要接真實下單時，這個風險胃口需要重新討論，不是介面換掉就自動安全。
 
-## 決策依據什麼資訊——為什麼交給 react 而不是固定 prompt
+## 決策依據什麼資訊——背景交易不使用 ReAct
 
-一開始的設計是「固定抓技術面/基本面/籌碼面數據，餵給一個專屬的小 prompt 判斷」——保證每次都不會漏查，但看到的資料範圍被寫死。討論後改成現在這樣：**候選股怎麼找是固定的（廣掃），但買賣怎麼判斷交給 react 自己決定要查什麼**（跟你直接問「台積電要不要買」用的是同一套 `run_research()`）。
+實際運行紀錄顯示，讓無人值守的背景交易使用完整 ReAct，會對每檔股票反覆呼叫多個工具；當觀察名單和持倉一起送入時，經常跑滿 300 秒仍無法產生最終決策。因此背景流程改回可控的固定資料管線：程式並行取得技術面、基本面、三大法人、MOPS 公告與目標新聞，組成最多兩檔的 Decision Packet，再用一次無工具的 LLM 呼叫產生 JSON。
 
-這牽涉一個明確的取捨，值得寫下來：`claude -p` 沒有辦法強制它一定要呼叫某個工具（沒有 API 那種 `tool_choice` 參數），所以讓它自由選工具，代表理論上某一輪它可能「懶得查」MOPS 公告——這正是 [ADR 0001](adr/0001-drop-langgraph-delegate-to-claude-code.md) 當初把 `daily_brief` 做成固定抓取、不讓 LLM 決定要不要查的理由。紙上交易迴圈是無人值守自動跑的，跟 `daily_brief` 是同一種情境，理論上也該用固定抓取——但這裡刻意選了跟 `react` 一樣的自由工具模式，因為看得到的資訊範圍更完整（新聞、MOPS、社群訊號都能自己查），對「要不要交易」這種需要綜合判斷的決策更合適，而且已經在 `REACT_SYSTEM` 裡加了規則要求它下單前務必先查證真實數據（見下方流程圖的「自主選擇」節點）。實測一輪緊盯可能跑到 20 個 agentic turns、花費比固定 prompt 版本高好幾倍，這是換來的真實代價。
+LLM 只提出 `buy`、`sell`、`hold`、`set_condition`、`cancel_condition` 或 `drop_watchlist`；程式會驗證股票必須在本輪範圍內、動作必須符合標的角色，再交給既有 `buy()`/`sell()`/條件單函式執行。Discord 的開放式投資研究仍保留 ReAct，背景自動化則優先追求可預測、可稽核與可熔斷。
 
-### 交易工具跟查詢工具的清單是分開的
+### Discord ReAct 的交易工具隔離
 
 因為交易決策也是走 `run_research()`（跟 `/stock` 同一個函式），一開始 `paper_trade_buy`/`paper_trade_sell` 是跟 `technical_analysis` 那些查詢工具放在同一份工具清單裡——代表你打 `/stock 2330` 只是想看技術面，Claude 手上卻也拿得到下單工具，理論上可能「順便」幫你買一張。
 
 修法是把工具清單拆成兩份（`src/llm_claude_code.py`）：
 
 - `USER_FACING_TOOL_NAMES`（14 個，不含交易工具）—— `run_research()` 的預設值，`/stock`、自由問答都用這份
-- `PAPER_TRADING_TOOL_NAMES`（產業／題材、研究、紙上交易工具）—— 只有
-  `paper_trading_loop.py` 呼叫 `run_research()` 時明確傳入這份；不包含 Discord 與 Gmail，
-  避免把無關工具 schema 一起送進每輪決策
+- `PAPER_TRADING_TOOL_NAMES` 保留給相容性與測試，但背景迴圈已不再把交易工具交給 LLM
 
-紙上交易另外使用較精簡的 `PAPER_TRADING_SYSTEM`。它保留產業／題材、技術面、基本面、
-籌碼、公告、條件單與風控規則，但移除一般助理的訊息／郵件操作說明。`paper_trade_buy`
-還有工具層硬性閘門：同一輪對同一檔股票必須成功完成 `technical_analysis`、
-`fundamental_analysis`、`chip_analysis`、`company_announcements`，缺一項就拒絕買入；
-因此 prompt 要求即使被模型忽略，也不會直接成交。
+背景決策完全不暴露 MCP 或交易工具；它拿到的是程式已收集好的資料包。即使 LLM 回傳越權股票或不合法動作，executor 也會拒絕。
 
 這樣「查股票」的對話**物理上**沒有下單工具可以用，不是靠 prompt 裡寫規則約束。
 
 ### 個人策略筆記也會納入判斷
 
-`data/knowledge_base/` 底下的個人交易筆記（均線、KD、籌碼、型態學等判斷邏輯），一開始只有 `daily_brief.py` 自己讀進去用，紙上交易迴圈完全看不到——這是分開各自接的架構問題，之後只會漏接或內容兜不起來。改法是把它接在共用的入口：`research_agent.py` 的 `run_research()` 每次呼叫都會重新讀取（不快取，改筆記不用重啟就生效）並附加到 system prompt 裡。因為 `/stock` 和紙上交易迴圈都走同一個 `run_research()`，這份筆記變成整個 react 路徑的固定背景知識，不用每個呼叫點各自記得加。`daily_brief.py` 維持原本自己讀取的方式，因為它本來就是獨立一條路。
+`data/knowledge_base/` 底下的個人交易筆記（均線、KD、籌碼、型態學等判斷邏輯）會在每次背景決策時由 `paper_trading_decision.py` 重新讀取並附加到 Decision Packet prompt；改筆記不需要重啟。Discord `/stock` 的 ReAct 路徑也會透過 `research_agent.py` 注入同一份筆記，`daily_brief.py` 則維持自己的固定資料管線。
 
-**注入是無條件的，不分 `/stock` 還是交易迴圈**。中途試過只在 `tool_names` 含交易工具時才附加（省 token 成本，`/stock` 純查詢不用多付這筆），但後來推翻了：這份筆記是使用者自己的判斷標準，不是可有可無的參考資料——如果 `/stock` 問「2330 該不該買？」這種判斷型問題卻看不到筆記，等於漏掉使用者最在意的判斷依據，跟一開始想解決的「agent 只靠自身訓練知識判斷」是同一個問題。筆記約 17KB（幾千個 token）的成本，被視為換取「保證不漏看」的合理代價。
+這份筆記在背景決策與 `/stock` 都是固定注入，不讓模型自行選擇是否讀取。筆記約 17KB（幾千個 token）的成本，被視為換取「保證不漏看使用者策略」的合理代價。
 
 ## 運作方式
 
@@ -80,13 +73,13 @@ flowchart TD
     B -->|否| T
     BROAD --> T{"距上次緊盯\n≥ 30 分鐘？"}
     T -->|否| START
-    T -->|是| GATHER["整理：觀察名單到期項目 + 短線持倉"]
-    GATHER --> RESEARCH["丟給 react agent（run_research）"]
-    RESEARCH --> DECIDE["react 自主選工具查證\n技術面/基本面/籌碼面/MOPS公告/新聞..."]
+    T -->|是| GATHER["公平輪替：優先 1 檔觀察股 + 1 檔持倉\n總數最多 2 檔"]
+    GATHER --> RESEARCH["程式並行抓固定資料\n形成 Decision Packet"]
+    RESEARCH --> DECIDE["LLM 單次輸出 JSON 決策"]
     DECIDE --> ACT{"要交易嗎？"}
-    ACT -->|買進| BUY["paper_trade_buy(horizon)\n用即時真實股價記錄，選短線或長期"]
-    ACT -->|賣出| SELL["paper_trade_sell()\n用即時真實股價記錄"]
-    ACT -->|不追蹤了| DROP["watchlist_drop()\n從觀察名單移除"]
+    ACT -->|買進| BUY["buy(horizon)\n風控驗證後交給 Broker"]
+    ACT -->|賣出| SELL["sell()\n風控驗證後交給 Broker"]
+    ACT -->|不追蹤了| DROP["drop_watchlist()\n從觀察名單移除"]
     ACT -->|不動作| HOLD["維持觀察 / 繼續持有"]
     BUY --> NOTIFY["發 Discord 通知"]
     SELL --> NOTIFY
@@ -95,9 +88,9 @@ flowchart TD
     HOLD --> START
 ```
 
-持有中的部位跟觀察名單用同一個「緊盯」頻率查（每 30 分鐘）——但**只有短線（`short_term`）部位**才會進緊盯；長期持有（`long_term`）的部位改成跟廣掃同一個頻率（40 分鐘）才檢視一次，這是「短打盯緊、長抱放寬」的具體做法。要買長線還是短打，是 react 呼叫 `paper_trade_buy` 時自己判斷、自己指定的。機械停損與條件單仍每 60 秒檢查，不受這個 LLM 頻率調整影響。
+持有中的部位跟觀察名單用同一個「緊盯」頻率查（每 30 分鐘）——但只有短線（`short_term`）部位會進緊盯；長期部位跟廣掃同頻（40 分鐘）。每輪總數最多兩檔，優先各取一檔觀察股與持倉；任一側沒有項目時，空出的名額才由另一側補上。機械停損與條件單仍每 60 秒檢查，不受 LLM 頻率影響。
 
-觀察名單每輪最多深入研究 3 檔，依「最久未檢查、最早加入」排序輪詢；成功完成研究後只更新本輪 3 檔的 `last_checked`，其餘標的留給後續循環。研究失敗不更新時間，並寫入 `research_failed` 事件供 `/log` 查詢。Agent 對本輪標的必須在買進、設定具體條件單、移出觀察名單之間做出處置，不能只留下沒有後續動作的「繼續觀察」。
+觀察名單依「最久未檢查、最早加入」排序，持倉也按最久未檢查輪替。決策失敗會寫入 `research_failed` 並進入 `PAPER_TRADING_FAILURE_COOLDOWN_SECONDS` 冷卻，避免同一批每 30 分鐘重複超時、讓後方標的永遠排不到。Agent 對觀察標的必須在買進、設定條件單、移出觀察名單之間做出處置；持倉才允許 `hold`。
 
 進出場價格一律來自 `paper_trade_buy`/`paper_trade_sell` 工具自己即時查到的真實股價，不是 LLM 自己講的數字——跟這專案其他所有功能同一個原則。
 
@@ -163,7 +156,7 @@ flowchart TD
 
 ## 每日花費上限
 
-`run_research()` 是完整的 agentic loop，一輪可能跑到 20 turns、花費 $0.4+。緊盯目前每 30 分鐘一次、廣掃每 40 分鐘一次；即使已比原本每 5 分鐘大幅降頻，這仍是無人值守跑好幾小時的流程，需要每日花費硬上限。
+背景決策現在是單次無工具 LLM 呼叫，但仍屬無人值守流程，因此保留多層每日上限。
 
 `.env` 的 `PAPER_TRADING_DAILY_BUDGET_USD`（預設 5.0）設定每個交易日的花費上限。累積花費（來自 `claude -p` 自己回報的 `total_cost_usd`，不是估算）一旦達到上限：
 
@@ -171,6 +164,13 @@ flowchart TD
 - 廣掃裡「抓新聞找候選股」那步（便宜、非 agentic）**照常繼續**，觀察名單還是會更新
 - 第一次超過上限時，發一則 Discord 通知告訴你；同一天不會重複通知
 - 隔天（新的交易日）自動歸零重新計算
+
+Codex CLI 不回報 `total_cost_usd`，所以另有兩個後端無關的硬限制：
+
+- `PAPER_TRADING_MAX_LLM_CALLS_PER_DAY`：每日最多背景決策呼叫數（預設 10）
+- `PAPER_TRADING_MAX_TIMEOUTS_PER_DAY`：每日最多 timeout 次數（預設 3）
+
+任一限制觸發後，當日停止新的 LLM 決策；廣掃、機械停損與條件單仍繼續運作。
 
 ## 機械式停損——不靠 agent 判斷的最後防線
 
@@ -203,7 +203,7 @@ flowchart TD
 - 觸發前 agent 還沒下單，這支股票理論上還在觀察名單或已經是持倉，跟平常 `paper_trade_buy`/`sell` 的前置條件一樣，只是決策時機提前設定好而已
 - 想取消還沒觸發的條件單，用 `paper_trade_cancel_condition`；`paper_trade_status` 看得到目前所有有效的條件單
 
-**條件單不是設完就沒人管了**：`_tight_scan()`/`_review_long_term_positions()` 每次組 prompt 時，會把該次審視範圍內（觀察名單、短線/長期持倉對應的股票）還沒觸發的條件單一併列出來提醒 agent（`_relevant_conditions_block()`），而不是只能靠 agent 自己想到才去呼叫 `paper_trade_status` 查。這樣如果情況已經變了（例如出現重大利空、原本設定的邏輯不再合理），agent 每輪都有機會主動判斷要不要呼叫 `paper_trade_cancel_condition` 取消、或用 `paper_trade_set_condition` 重新設定，不會變成一個設定後被遺忘、只會機械觸發的死規則。
+**條件單不是設完就沒人管了**：Decision Packet 會直接附上該標的所有有效條件單。LLM 可以回傳 `cancel_condition` 或新的 `set_condition`；executor 只允許取消該資料包中真的存在的條件 ID，避免越權修改其他標的。
 
 ## 目前沒做的
 

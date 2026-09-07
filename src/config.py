@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     # pause until the next trading session; candidate discovery (cheap,
     # non-agentic) keeps running.
     paper_trading_daily_budget_usd: float = 5.0
+    # Codex CLI does not expose USD cost, so call/timeout caps are the
+    # backend-independent safety net for unattended decision runs.
+    paper_trading_max_llm_calls_per_day: int = 10
+    paper_trading_max_timeouts_per_day: int = 3
+    paper_trading_failure_cooldown_seconds: int = 3600
     # Concentration limits -- without these, paper_trade_buy has no ceiling
     # and the agent could keep opening positions indefinitely. Deliberately
     # set high (not a tight operational cap) -- paper trading risks no real

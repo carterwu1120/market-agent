@@ -181,27 +181,3 @@ async def test_missing_indicator_value_skips_without_crashing(monkeypatch):
 
     buy_mock.assert_not_awaited()
     assert len(await get_active_conditions()) == 1
-
-
-# ── _relevant_conditions_block() -- reminds the agent each review cycle ──
-
-async def test_relevant_conditions_block_includes_condition_for_symbol_in_scope():
-    created = await actions.set_condition("2330.TW", "close", "lt", 550.0, "buy")
-
-    block = await loop._relevant_conditions_block({"2330.TW"})
-
-    assert f"id={created['condition_id']}" in block
-    assert "2330.TW" in block
-
-
-async def test_relevant_conditions_block_excludes_condition_for_symbol_out_of_scope():
-    await actions.set_condition("2330.TW", "close", "lt", 550.0, "buy")
-
-    block = await loop._relevant_conditions_block({"2454.TW"})
-
-    assert block == ""
-
-
-async def test_relevant_conditions_block_empty_when_no_conditions():
-    block = await loop._relevant_conditions_block({"2330.TW"})
-    assert block == ""

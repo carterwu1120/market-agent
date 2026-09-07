@@ -149,7 +149,7 @@ async def _run_claude_cli(cmd: list[str], timeout: int, stdin_prompt: str) -> di
             )
             try:
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 await proc.wait()
                 raise ClaudeCodeError(f"claude CLI timed out after {timeout}s")
@@ -157,7 +157,8 @@ async def _run_claude_cli(cmd: list[str], timeout: int, stdin_prompt: str) -> di
         Path(stdin_path).unlink(missing_ok=True)
 
     if proc.returncode != 0:
-        raise ClaudeCodeError(f"claude CLI exited {proc.returncode}: {stderr.decode(errors='replace')}")
+        detail = stderr.decode(errors="replace")
+        raise ClaudeCodeError(f"claude CLI exited {proc.returncode}: {detail}")
 
     try:
         objects = _parse_json_objects(stdout.decode())
@@ -187,6 +188,16 @@ async def claude_code_chat(
     call shape — used for classification/extraction/synthesis prompts
     that don't need tool use.
     """
+    payload = await claude_code_chat_with_usage(messages, system, timeout)
+    return payload["result"]
+
+
+async def claude_code_chat_with_usage(
+    messages: list[dict],
+    system: str = "",
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> dict:
+    """Single non-agentic call that also preserves Claude's reported cost."""
     history = [m for m in messages if m.get("role") in ("user", "assistant")]
     user_message = history[-1]["content"] if history and history[-1]["role"] == "user" else ""
     prior = history[:-1] if user_message else history
@@ -198,7 +209,10 @@ async def claude_code_chat(
 
     logger.debug(f"claude_code_chat: invoking CLI (prompt_len={len(prompt)})")
     payload = await _run_claude_cli(cmd, timeout, prompt)
-    return payload.get("result", "")
+    return {
+        "result": payload.get("result", ""),
+        "cost_usd": payload.get("total_cost_usd", 0.0),
+    }
 
 
 async def claude_code_research(

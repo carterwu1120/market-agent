@@ -22,7 +22,11 @@ async def _reset_budget_state(tmp_path, monkeypatch):
     monkeypatch.setattr(loop, "_daily_cost_usd", 0.0)
     monkeypatch.setattr(loop, "_daily_cost_date", None)
     monkeypatch.setattr(loop, "_budget_notified", False)
+    monkeypatch.setattr(loop, "_daily_llm_calls", 0)
+    monkeypatch.setattr(loop, "_daily_timeouts", 0)
     monkeypatch.setattr(loop.settings, "paper_trading_daily_budget_usd", 1.0)
+    monkeypatch.setattr(loop.settings, "paper_trading_max_llm_calls_per_day", 10)
+    monkeypatch.setattr(loop.settings, "paper_trading_max_timeouts_per_day", 3)
     monkeypatch.setattr(loop.settings, "schedule_report_channel_id", "")
     monkeypatch.setattr(loop.settings, "db_path", str(tmp_path / "test.db"))
     await init_storage()
@@ -62,3 +66,17 @@ async def test_budget_resets_on_a_new_day(monkeypatch):
 
     tomorrow = loop._tw_now() + datetime.timedelta(days=1)
     assert loop._budget_exceeded(tomorrow) is False
+
+
+def test_call_count_caps_codex_even_without_usd_cost(monkeypatch):
+    monkeypatch.setattr(loop.settings, "paper_trading_daily_budget_usd", 999.0)
+    for _ in range(10):
+        loop._record_llm_call()
+    assert loop._budget_exceeded(loop._tw_now()) is True
+
+
+def test_timeout_count_trips_circuit_breaker(monkeypatch):
+    monkeypatch.setattr(loop.settings, "paper_trading_daily_budget_usd", 999.0)
+    for _ in range(3):
+        loop._record_llm_failure(RuntimeError("codex timed out"))
+    assert loop._decision_limit_reason(loop._tw_now()) == "timeouts 3/3"

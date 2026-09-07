@@ -32,6 +32,34 @@ async def test_llm_chat_routes_to_claude_by_default(monkeypatch):
     assert await llm.llm_chat([{"role": "user", "content": "hi"}]) == "claude"
 
 
+@pytest.mark.asyncio
+async def test_llm_chat_with_usage_preserves_claude_cost(monkeypatch):
+    monkeypatch.setattr(llm.settings, "llm_backend", "claude")
+    payload = {"result": "claude", "cost_usd": 0.25}
+    monkeypatch.setattr(llm, "claude_code_chat_with_usage", AsyncMock(return_value=payload))
+
+    assert await llm.llm_chat_with_usage([{"role": "user", "content": "hi"}]) == payload
+
+
+@pytest.mark.asyncio
+async def test_llm_chat_with_usage_marks_codex_cost_unknown_as_zero(monkeypatch):
+    monkeypatch.setattr(llm.settings, "llm_backend", "codex")
+    monkeypatch.setattr(llm, "codex_chat", AsyncMock(return_value="codex"))
+
+    result = await llm.llm_chat_with_usage([{"role": "user", "content": "hi"}])
+
+    assert result == {"result": "codex", "cost_usd": 0.0}
+
+
+def test_codex_timeout_summary_is_bounded_and_keeps_latest_activity():
+    detail = "\n".join(f"tool call {index}" for index in range(100))
+    summary = llm_codex._summarize_cli_output(detail, max_chars=80)
+
+    assert len(summary) <= 80
+    assert "tool call 99" in summary
+    assert "tool call 0" not in summary
+
+
 def test_codex_mcp_overrides_start_project_server():
     overrides = _mcp_overrides(["technical_analysis"])
     expected_python = json.dumps(str(Path(sys.executable).resolve()))

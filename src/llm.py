@@ -10,6 +10,7 @@ from src.llm_claude_code import (
 from src.llm_claude_code import (
     USER_FACING_TOOL_NAMES,
     claude_code_chat,
+    claude_code_chat_with_usage,
     claude_code_research,
 )
 from src.llm_codex import codex_chat, codex_research
@@ -22,6 +23,16 @@ async def llm_chat(messages: list[dict], system: str = "", timeout: int = 180) -
     if settings.llm_backend == "codex":
         return await codex_chat(messages, system, timeout)
     return await claude_code_chat(messages, system, timeout)
+
+
+async def llm_chat_with_usage(
+    messages: list[dict], system: str = "", timeout: int = 180
+) -> dict:
+    """Non-agentic chat plus cost metadata when the selected CLI exposes it."""
+    if settings.llm_backend == "codex":
+        result = await codex_chat(messages, system, timeout)
+        return {"result": result, "cost_usd": 0.0}
+    return await claude_code_chat_with_usage(messages, system, timeout)
 
 
 async def llm_research(

@@ -32,6 +32,13 @@ class CodexError(RuntimeError):
     pass
 
 
+def _summarize_cli_output(detail: str, max_chars: int = 600) -> str:
+    """Keep timeout diagnostics useful without logging entire prompts/tool transcripts."""
+    lines = [line.strip() for line in detail.splitlines() if line.strip()]
+    summary = " | ".join(lines[-8:])
+    return summary[-max_chars:]
+
+
 def _native_codex_from_npm_shim(shim: Path) -> Path | None:
     """Find the native executable installed behind npm's ``codex.cmd``."""
     package_root = shim.parent / "node_modules" / "@openai" / "codex" / "node_modules" / "@openai"
@@ -128,9 +135,10 @@ async def _run_codex_cli(
             stdout, stderr = await communicate_task
             detail = stderr.decode(errors="replace") or stdout.decode(errors="replace")
             detail = detail.strip()
+            summary = _summarize_cli_output(detail)
             if detail:
-                logger.warning(f"codex CLI timeout output: {detail[-4000:]}")
-            suffix = f"; last output: {detail[-2000:]}" if detail else ""
+                logger.warning(f"codex CLI timed out; last activity: {summary}")
+            suffix = f"; last activity: {summary}" if summary else ""
             raise CodexError(f"codex CLI timed out after {timeout}s{suffix}")
 
         if proc.returncode != 0:
