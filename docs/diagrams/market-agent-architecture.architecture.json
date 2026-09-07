@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Market Agent 系統架構",
+    "output": "market-agent-architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [1380, 900],
+    "views": [
+      {
+        "id": "conversation",
+        "label": "Discord 問答路徑",
+        "focus": ["discord", "pipeline", "daily_brief", "research", "llm_cli", "mcp_tools"],
+        "note": "使用者訊息經意圖路由，進入固定日報或 MCP 研究流程。"
+      },
+      {
+        "id": "paper_loop",
+        "label": "紙上交易路徑",
+        "focus": ["paper_loop", "decision", "market_data", "risk_actions", "broker", "sqlite"],
+        "note": "背景掃描收集資料，LLM 提案經程式風控後才會寫入模擬帳本。"
+      },
+      {
+        "id": "execution_seam",
+        "label": "行情與券商抽換點",
+        "focus": ["market_data", "risk_actions", "broker", "sqlite"],
+        "note": "MarketDataProvider 與 Broker 介面隔離資料來源和交易執行。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "discord",
+      "type": "external",
+      "label": "Discord 使用者與排程",
+      "sublabel": "自由提問、Slash Commands、定時報告",
+      "pos": [40, 170],
+      "size": [210, 76]
+    },
+    {
+      "id": "pipeline",
+      "type": "backend",
+      "label": "Agent Pipeline",
+      "sublabel": "意圖分類與批次研究路由",
+      "pos": [315, 170],
+      "size": [190, 76]
+    },
+    {
+      "id": "daily_brief",
+      "type": "backend",
+      "label": "Daily Brief",
+      "sublabel": "固定資料 fan-out 與市場摘要",
+      "pos": [585, 55],
+      "size": [190, 76]
+    },
+    {
+      "id": "research",
+      "type": "backend",
+      "label": "Research Agent",
+      "sublabel": "開放式研究與知識庫注入",
+      "pos": [585, 285],
+      "size": [190, 76]
+    },
+    {
+      "id": "llm_cli",
+      "type": "external",
+      "label": "LLM CLI Backend",
+      "sublabel": "Codex 或 Claude Code",
+      "pos": [855, 285],
+      "size": [190, 76]
+    },
+    {
+      "id": "mcp_tools",
+      "type": "cloud",
+      "label": "Market MCP Tools",
+      "sublabel": "技術、基本、籌碼、公告、新聞",
+      "pos": [1085, 285],
+      "size": [220, 76]
+    },
+    {
+      "id": "paper_loop",
+      "type": "backend",
+      "label": "Paper Trading Loop",
+      "sublabel": "廣掃、緊盯、停損與條件單",
+      "pos": [315, 520],
+      "size": [210, 80]
+    },
+    {
+      "id": "decision",
+      "type": "backend",
+      "label": "Decision Packet",
+      "sublabel": "結構化 LLM 交易提案",
+      "pos": [600, 520],
+      "size": [190, 80]
+    },
+    {
+      "id": "market_data",
+      "type": "external",
+      "label": "MarketDataProvider",
+      "sublabel": "目前 Yahoo；可替換行情來源",
+      "pos": [600, 700],
+      "size": [210, 80],
+      "tag": "Provider seam"
+    },
+    {
+      "id": "risk_actions",
+      "type": "security",
+      "label": "交易規則與風控",
+      "sublabel": "驗證標的、額度、部位與動作",
+      "pos": [875, 520],
+      "size": [210, 80]
+    },
+    {
+      "id": "broker",
+      "type": "backend",
+      "label": "Broker 介面",
+      "sublabel": "目前 PaperBroker；未來可接真實券商",
+      "pos": [1110, 520],
+      "size": [220, 80],
+      "tag": "Execution seam"
+    },
+    {
+      "id": "sqlite",
+      "type": "database",
+      "label": "SQLite",
+      "sublabel": "持倉、觀察名單、條件單與稽核紀錄",
+      "pos": [1110, 700],
+      "size": [220, 80]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "互動與研究",
+      "wraps": ["pipeline", "daily_brief", "research", "llm_cli", "mcp_tools"],
+      "pad": 24
+    },
+    {
+      "kind": "region",
+      "label": "自動紙上交易",
+      "wraps": ["paper_loop", "decision", "market_data", "risk_actions", "broker", "sqlite"],
+      "pad": 24
+    }
+  ],
+  "connections": [
+    {"id": "discord_pipeline", "from": "discord", "to": "pipeline", "label": "訊息／排程請求", "variant": "emphasis", "labelAt": [283, 150]},
+    {"id": "pipeline_brief", "from": "pipeline", "to": "daily_brief", "label": "整體市場摘要"},
+    {"id": "pipeline_research", "from": "pipeline", "to": "research", "label": "個股／題材研究"},
+    {"id": "research_llm", "from": "research", "to": "llm_cli", "label": "研究 Prompt", "variant": "emphasis"},
+    {"id": "llm_mcp", "from": "llm_cli", "to": "mcp_tools", "label": "MCP 工具呼叫", "labelAt": [1065, 375]},
+    {"id": "discord_loop", "from": "discord", "to": "paper_loop", "label": "啟動背景任務", "variant": "dashed"},
+    {"id": "loop_decision", "from": "paper_loop", "to": "decision", "variant": "emphasis"},
+    {"id": "loop_market", "from": "paper_loop", "to": "market_data", "label": "每分鐘行情檢查", "labelAt": [560, 650]},
+    {"id": "decision_risk", "from": "decision", "to": "risk_actions", "label": "buy / sell / hold / condition", "labelAt": [833, 495]},
+    {"id": "market_risk", "from": "market_data", "to": "risk_actions", "label": "報價與技術指標"},
+    {"id": "risk_broker", "from": "risk_actions", "to": "broker", "label": "通過驗證的委託", "variant": "security", "labelAt": [1098, 614]},
+    {"id": "broker_sqlite", "from": "broker", "to": "sqlite", "label": "模擬成交與帳本", "labelAt": [1220, 640]}
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "兩條執行路徑",
+      "items": ["Discord 研究保留開放式 MCP 工具選擇", "背景交易使用結構化決策與程式風控"]
+    },
+    {
+      "dot": "emerald",
+      "title": "可替換邊界",
+      "items": ["MarketDataProvider 隔離行情來源", "Broker 介面隔離 PaperBroker 與未來真實券商"]
+    },
+    {
+      "dot": "rose",
+      "title": "安全核心",
+      "items": ["LLM 只提出動作，不直接寫入帳本", "停損與條件單可在不呼叫 LLM 的情況下執行"]
+    }
+  ]
+}
