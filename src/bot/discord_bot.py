@@ -197,7 +197,7 @@ async def _process_and_reply(
             return
         await ctx.response.defer(thinking=True)
         async def send(text: str):
-            await ctx.followup.send(text)
+            return await ctx.followup.send(text, wait=True)
     else:
         msg = interaction_or_message
         user_id = str(msg.author.id)
@@ -206,7 +206,7 @@ async def _process_and_reply(
         if not _is_allowed_channel(channel_id):
             return  # silently ignore in non-slash context
         async def send(text: str):
-            await msg.channel.send(text)
+            return await msg.channel.send(text)
 
     # Load session history — best-effort, empty on failure
     try:
@@ -218,6 +218,14 @@ async def _process_and_reply(
     intent = ""
     target_symbols = []
     conclusion = ""
+    progress_message = None
+    result = {}
+    try:
+        progress_message = await send(
+            "⏳ 已收到問題，正在整理資料與分析；多個標的可能需要分批處理。"
+        )
+    except Exception as exc:
+        logger.debug(f"Progress message send failed: {exc}")
     try:
         result = await run_agent(
             user_message=user_message,
@@ -236,6 +244,17 @@ async def _process_and_reply(
     # Send response first — cache/persistence failures must not block the reply
     for chunk in chunk_message(report):
         await send(chunk)
+
+    if progress_message is not None:
+        try:
+            progress_text = (
+                "⚠️ 分析已結束，但部分或全部內容未完成。"
+                if result.get("error")
+                else "✅ 分析完成。"
+            )
+            await progress_message.edit(content=progress_text)
+        except Exception as exc:
+            logger.debug(f"Progress message update failed: {exc}")
 
     # Persist to session store — best-effort
     try:

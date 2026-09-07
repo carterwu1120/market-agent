@@ -77,3 +77,63 @@ async def test_llm_exception_falls_back_to_react(monkeypatch):
 
     intent = await pipeline.classify_intent("隨便問個問題")
     assert intent == "react"
+
+
+def test_extract_requested_symbols_includes_tickers_and_company_names():
+    assert pipeline.extract_requested_symbols(
+        "定期定額2330 and 0050，以及聯發科適不適合買進？"
+    ) == ["2330.TW", "0050.TW", "2454.TW"]
+
+
+@pytest.mark.asyncio
+async def test_three_symbols_are_split_and_successful_results_are_combined(monkeypatch):
+    prompts = []
+
+    async def fake_research(prompt, history):
+        prompts.append(prompt)
+        symbol = "2330.TW" if len(prompts) == 1 else "2454.TW"
+        return {
+            "final_report": f"report {symbol}",
+            "conclusion": f"conclusion {symbol}",
+            "target_symbols": [symbol],
+            "cost_usd": 0.0,
+        }
+
+    monkeypatch.setattr(pipeline, "run_research", fake_research)
+    result = await pipeline._run_research_batched("比較 2330、0050 與聯發科", [])
+
+    assert len(prompts) == 2
+    assert "2330.TW, 0050.TW" in prompts[0]
+    assert "2454.TW" in prompts[1]
+    assert "report 2330.TW" in result["final_report"]
+    assert "report 2454.TW" in result["final_report"]
+
+
+@pytest.mark.asyncio
+async def test_batched_research_keeps_success_when_another_batch_times_out(monkeypatch):
+    calls = 0
+
+    async def fake_research(prompt, history):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("codex CLI timed out after 300s; technical_analysis completed")
+        return {
+            "final_report": "聯發科分析完成",
+            "conclusion": "聯發科結論",
+            "target_symbols": ["2454.TW"],
+            "cost_usd": 0.0,
+        }
+
+    monkeypatch.setattr(pipeline, "run_research", fake_research)
+    result = await pipeline._run_research_batched("比較 2330、0050 與聯發科", [])
+
+    assert "聯發科分析完成" in result["final_report"]
+    assert "2330.TW, 0050.TW" in result["final_report"]
+    assert result["target_symbols"] == ["2454.TW"]
+    assert result["error"] == "one or more research batches failed"
+
+
+def test_timeout_is_classified_before_tool_names_in_error_output():
+    error = "codex CLI timed out after 300s; technical_analysis completed"
+    assert pipeline._infer_failed_stage(error) == "AI 分析逾時"
