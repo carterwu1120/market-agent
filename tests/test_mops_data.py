@@ -5,6 +5,9 @@ is mocked; the matching/filtering logic itself is exercised for real.
 """
 import pytest
 
+from src.config import settings
+from src.memory.announcement_store import get_recent_announcements, upsert_announcements
+from src.memory.store import init_storage
 from src.tools import mops_data
 
 
@@ -86,3 +89,58 @@ async def test_financial_summary_batch_only_includes_matched_symbols(
 
     assert result["2330.TW"]["營業收入"] == "1000"
     assert "2454.TW" not in result
+
+
+def test_mops_datetime_converts_roc_date_to_taipei_iso():
+    assert mops_data._mops_datetime("1150831", "202500") == "2026-08-31T20:25:00+08:00"
+
+
+def test_mops_datetime_rejects_invalid_input():
+    assert mops_data._mops_datetime("not-a-date", "") is None
+
+
+@pytest.mark.asyncio
+async def test_announcement_archive_deduplicates_and_queries_recent(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "db_path", str(tmp_path / "market.db"))
+    assert await init_storage()
+    item = {
+        "symbol": "2454",
+        "announced_at": "2026-09-08T09:00:00+08:00",
+        "date": "1150908",
+        "time": "090000",
+        "subject": "聯發科測試公告",
+        "source_url": mops_data.MATERIAL_INFO_URL,
+        "fetched_at": "2026-09-08T09:01:00+08:00",
+    }
+
+    await upsert_announcements([item])
+    await upsert_announcements([item])
+    result = await get_recent_announcements(["2454"], days=30)
+
+    assert len(result["2454"]) == 1
+    assert result["2454"][0]["subject"] == "聯發科測試公告"
+
+
+@pytest.mark.asyncio
+async def test_recent_material_info_refreshes_then_reads_archive(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "db_path", str(tmp_path / "market.db"))
+    assert await init_storage()
+
+    async def fake_fetch(url):
+        await mops_data._archive_material_dump(
+            [
+                {
+                    "公司代號": "2454",
+                    "發言日期": "1150908",
+                    "發言時間": "090000",
+                    "主旨": "近期公告",
+                }
+            ]
+        )
+        return []
+
+    monkeypatch.setattr(mops_data, "_fetch_market_dump", fake_fetch)
+    result = await mops_data.get_recent_material_info("2454.TW", days=30)
+
+    assert result["today_refresh"] == "ok"
+    assert [item["subject"] for item in result["items"]] == ["近期公告"]

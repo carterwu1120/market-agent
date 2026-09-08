@@ -27,6 +27,7 @@ from loguru import logger
 from src.agents.daily_brief import run_daily_brief, run_weekend_digest
 from src.bot.discord_bot import chunk_message
 from src.config import settings
+from src.tools.mops_data import refresh_material_info_snapshot
 
 SLOT_PROMPTS = {
     "pre_market": (
@@ -120,6 +121,17 @@ async def weekend_digest_report():
     await _send_weekend_digest()
 
 
+@tasks.loop(time=datetime.time(14, 35, tzinfo=_TZ))
+async def mops_announcement_snapshot():
+    if datetime.datetime.now(_TZ).weekday() >= 5:
+        return
+    ok = await refresh_material_info_snapshot()
+    if ok:
+        logger.info("Scheduler: MOPS material-information snapshot archived")
+    else:
+        logger.warning("Scheduler: MOPS material-information snapshot refresh failed")
+
+
 def start_scheduled_tasks(bot_instance) -> None:
     global _bot
     _bot = bot_instance
@@ -127,12 +139,19 @@ def start_scheduled_tasks(bot_instance) -> None:
     if not settings.schedule_enabled:
         logger.info("Scheduler disabled (SCHEDULE_ENABLED=false), skipping")
         return
+    mops_announcement_snapshot.start()
     if not settings.schedule_report_channel_id:
-        logger.info("Scheduler: SCHEDULE_REPORT_CHANNEL_ID not set, skipping")
+        logger.info(
+            "Scheduler: SCHEDULE_REPORT_CHANNEL_ID not set; reports skipped, "
+            "MOPS snapshot task remains active"
+        )
         return
 
     pre_market_report.start()
     mid_session_report.start()
     post_market_report.start()
     weekend_digest_report.start()
-    logger.info("Scheduled tasks started: 08:30 / 12:00 / 14:30 TST (平日) + 20:00 週日假日摘要")
+    logger.info(
+        "Scheduled tasks started: 08:30 / 12:00 / 14:30 TST (平日) + "
+        "14:35 MOPS snapshot + 20:00 週日假日摘要"
+    )

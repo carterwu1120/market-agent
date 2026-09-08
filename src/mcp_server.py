@@ -27,7 +27,11 @@ from src.tools.discord_tools import send_channel_message
 from src.tools.discord_tools import send_dm as _discord_send_dm
 from src.tools.gmail_tools import create_draft as _gmail_create_draft
 from src.tools.gmail_tools import send_email as _gmail_send_email
-from src.tools.mops_data import get_financial_summary, get_material_info
+from src.tools.mops_data import (
+    get_financial_summary,
+    get_material_info,
+    get_recent_material_info,
+)
 from src.tools.sector_data import get_sector_symbols
 from src.tools.stock_data import get_fundamental_data, get_stock_price, get_technical_indicators
 from src.tools.theme_search import search_theme_stocks
@@ -264,10 +268,33 @@ async def company_announcements(symbol: str) -> str:
     _mark_research_check(symbol, "company_announcements")
     items = result.get("items", [])
     if not items:
-        return f"{symbol} 今日無重大訊息公告"
+        return (
+            f"{symbol} 今日 MOPS 快照沒有重大訊息；"
+            "這不代表最近幾日沒有公告，歷史事件請改查 company_announcements_recent。"
+        )
     lines = [f"{symbol} 今日重大訊息（來源：{result['source']}）："]
     for it in items:
         lines.append(f"- [{it['date']} {it['time']}] {it['subject']}")
+    return "\n".join(lines)
+
+
+@_tool("company_announcements_recent")
+async def company_announcements_recent(symbol: str, days: int = 30) -> str:
+    """查詢本系統已保存的近期 MOPS 重大訊息。days 可設 1–365；資料從系統開始每日保存後累積。"""
+    result = await get_recent_material_info(symbol, days)
+    if result.get("error"):
+        return f"{symbol} 近期重大訊息查詢失敗：{result['error']}"
+    items = result.get("items", [])
+    if not items:
+        refresh_note = "今日更新失敗；" if result.get("today_refresh") == "failed" else ""
+        return (
+            f"{symbol} {refresh_note}本機近 {result['days']} 日公告封存沒有資料。"
+            "封存只涵蓋本系統開始收集後的日期，不能據此推論期間內從未公告。"
+        )
+    lines = [f"{symbol} 本機近 {result['days']} 日 MOPS 重大訊息封存："]
+    for item in items:
+        lines.append(f"- {item['date']} {item['time']}｜{item['subject']}")
+    lines.append(f"來源：{result['source']}")
     return "\n".join(lines)
 
 

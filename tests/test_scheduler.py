@@ -97,3 +97,25 @@ async def test_weekend_digest_runs_on_sunday(monkeypatch):
 
     run_digest_mock.assert_called_once()
     channel.send.assert_called_once_with("假日摘要內容")
+
+
+@pytest.mark.asyncio
+async def test_mops_snapshot_runs_on_weekday(monkeypatch):
+    _patch_now(monkeypatch, MONDAY)
+    refresh_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(scheduler, "refresh_material_info_snapshot", refresh_mock)
+
+    await scheduler.mops_announcement_snapshot.coro()
+
+    refresh_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mops_snapshot_skips_on_weekend(monkeypatch):
+    _patch_now(monkeypatch, SATURDAY)
+    refresh_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(scheduler, "refresh_material_info_snapshot", refresh_mock)
+
+    await scheduler.mops_announcement_snapshot.coro()
+
+    refresh_mock.assert_not_called()

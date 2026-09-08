@@ -44,7 +44,8 @@ _PAPER_TRADE_TOOL_NAMES = [
 ALL_TOOL_NAMES = [
     "sector_lookup", "theme_lookup", "technical_analysis", "fundamental_analysis",
     "chip_analysis", "company_news", "stock_history",
-    "web_search", "company_announcements", "company_financial_summary",
+    "web_search", "company_announcements", "company_announcements_recent",
+    "company_financial_summary",
     "discord_message", "discord_dm", "gmail_draft", "gmail_send",
     *_PAPER_TRADE_TOOL_NAMES,
 ]
@@ -54,7 +55,7 @@ USER_FACING_TOOL_NAMES = [t for t in ALL_TOOL_NAMES if t not in _PAPER_TRADE_TOO
 PAPER_TRADING_TOOL_NAMES = [
     "sector_lookup", "theme_lookup", "technical_analysis", "fundamental_analysis",
     "chip_analysis", "company_news", "stock_history", "web_search",
-    "company_announcements", "company_financial_summary",
+    "company_announcements", "company_announcements_recent", "company_financial_summary",
     *_PAPER_TRADE_TOOL_NAMES,
 ]
 

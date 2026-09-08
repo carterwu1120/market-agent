@@ -81,6 +81,23 @@ CREATE TABLE IF NOT EXISTS stock_daily_fundamental (
     PRIMARY KEY (symbol, date)
 );
 
+-- Historical archive of the TWSE MOPS daily material-information snapshot.
+-- The upstream OpenAPI only exposes the current day, so retaining each dump
+-- locally is what makes "recent announcements" queries possible later.
+CREATE TABLE IF NOT EXISTS company_announcements (
+    symbol TEXT NOT NULL,
+    announced_at TEXT NOT NULL,
+    raw_date TEXT NOT NULL,
+    raw_time TEXT NOT NULL DEFAULT '',
+    subject TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (symbol, announced_at, subject)
+);
+
+CREATE INDEX IF NOT EXISTS ix_company_announcements_symbol_date
+    ON company_announcements (symbol, announced_at DESC);
+
 -- Paper-trading tracker (src/agents/paper_trading_loop.py): a real open ->
 -- closed position lifecycle, not a one-shot recommendation. entry_price/
 -- exit_price always come from real fetched prices, never an LLM-stated

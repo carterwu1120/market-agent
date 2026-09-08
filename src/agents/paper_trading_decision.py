@@ -17,7 +17,7 @@ from loguru import logger
 from src.llm import llm_chat_with_usage
 from src.tools.chip_data import get_institutional_trading
 from src.tools.knowledge_base import read_knowledge_base
-from src.tools.mops_data import get_material_info_batch
+from src.tools.mops_data import get_recent_material_info_batch
 from src.tools.news_fetcher import _TICKER_NAMES, NewsArticle, fetch_targeted_news
 from src.tools.paper_trading_actions import (
     buy,
@@ -90,7 +90,7 @@ async def collect_decision_packets(targets: list[dict[str, Any]]) -> list[dict[s
         technical_task,
         fundamental_task,
         chip_task,
-        get_material_info_batch(symbols),
+        get_recent_material_info_batch(symbols, days=30),
         fetch_targeted_news(symbols),
         return_exceptions=True,
     )
