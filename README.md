@@ -45,7 +45,7 @@ flowchart TD
     CLS -->|daily_brief| DB
 
     subgraph RA["run_research()（Claude Code 原生 ReAct）"]
-        LLM_R["Claude Code 自主決定\n呼叫哪些 MCP 工具"] -->|tool_calls| MCP["src/mcp_server.py\n20 種工具（含紙上交易）"]
+        LLM_R["Claude Code 自主決定\n呼叫哪些 MCP 工具"] -->|tool_calls| MCP["src/mcp_server.py\n22 種工具（含紙上交易）"]
         MCP -->|工具結果| LLM_R
     end
 
@@ -88,6 +88,7 @@ flowchart TD
 | `technical_analysis(symbol)` | `stock_data.get_technical_indicators()` |
 | `fundamental_analysis(symbol)` | `stock_data.get_fundamental_data()` |
 | `company_news(symbol)` | `company_insight.get_company_insights()` |
+| `company_moat_analysis(symbol, refresh)` | 條件式蒐集技術、量產、供應鏈與競爭風險證據；SQLite 快取 7 天 |
 | `web_search(query, max_results)` | `web_search.search_web()`（自己下關鍵字，僅供參考背景） |
 | `company_announcements(symbol)` | `mops_data.get_material_info()`（TWSE MOPS，只有今天） |
 | `company_announcements_recent(symbol, days)` | 本機每日封存的 TWSE MOPS 公告（預設近 30 日；只涵蓋系統開始收集後） |
@@ -99,7 +100,7 @@ flowchart TD
 | `paper_trade_set_condition(symbol, indicator, operator, threshold, action, ...)` | 設定條件單，系統每 tick 機械式檢查真實數據，成立就直接執行買/賣，不用再花一次 LLM 呼叫確認 |
 | `paper_trade_cancel_condition(condition_id)` | 取消一筆還沒觸發的條件單 |
 
-> 完整清單（含 Discord/Gmail 訊息工具，共 21 個）見 [`src/mcp_server.py`](src/mcp_server.py)。紙上交易的完整運作方式（背景迴圈、廣掃/緊盯頻率、架構圖）見 [`docs/paper_trading.md`](docs/paper_trading.md)。
+> 完整清單（含 Discord/Gmail 訊息工具，共 22 個）見 [`src/mcp_server.py`](src/mcp_server.py)。紙上交易的完整運作方式（背景迴圈、廣掃/緊盯頻率、架構圖）見 [`docs/paper_trading.md`](docs/paper_trading.md)。
 
 ---
 
@@ -260,7 +261,7 @@ market-agent/
     ├── cli.py                   # 本地 CLI（不需 Discord）+ /status 終端面板
     ├── config.py                # 所有設定（pydantic-settings）
     ├── llm_claude_code.py       # Claude Code CLI 後端（claude_code_chat / claude_code_research）
-    ├── mcp_server.py            # MCP server：暴露 21 個工具給 claude -p --mcp-config 呼叫
+    ├── mcp_server.py            # MCP server：暴露 22 個工具給 claude -p --mcp-config 呼叫
     ├── agents/
     │   ├── pipeline.py          # ★ intent 分類 + run_agent() 對外入口
     │   ├── daily_brief.py       # daily_brief 固定平行抓取流程

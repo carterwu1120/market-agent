@@ -49,6 +49,7 @@ from src.memory.paper_trading_store import (
 )
 from src.memory.store import init_storage
 from src.tools.chip_data import get_institutional_streak
+from src.tools.company_moat import get_company_moat_evidence
 from src.tools.discord_tools import send_channel_message
 from src.tools.market_data import get_quote
 from src.tools.paper_trading_actions import buy, sell
@@ -402,10 +403,12 @@ async def _broad_scan() -> None:
     open_symbols = {p["symbol"] for p in await get_open_positions()}
     watchlist_symbols = {w["symbol"] for w in await get_watchlist()}
     new_count = 0
+    new_symbols: list[str] = []
     for symbol in candidates:
         if symbol in open_symbols or symbol in watchlist_symbols:
             continue
         await add_to_watchlist(symbol)
+        new_symbols.append(symbol)
         new_count += 1
     logger.info(
         f"paper_trading_loop: broad scan found {len(candidates)} candidates, "
@@ -414,6 +417,19 @@ async def _broad_scan() -> None:
     await log_event(
         "broad_scan", f"found {len(candidates)} candidates, {new_count} new to watchlist"
     )
+
+    # Investigate a newly discovered candidate once, not on every tight scan.
+    # The helper has a seven-day SQLite cache and this batch is deliberately bounded.
+    if new_symbols:
+        moat_results = await asyncio.gather(
+            *(get_company_moat_evidence(symbol) for symbol in new_symbols[:2]),
+            return_exceptions=True,
+        )
+        failures = sum(isinstance(result, Exception) for result in moat_results)
+        logger.info(
+            f"paper_trading_loop: moat evidence warmed for "
+            f"{len(moat_results) - failures}/{len(moat_results)} new candidates"
+        )
 
     expired = await expire_watchlist(time.time() - WATCHLIST_TTL)
     if expired:

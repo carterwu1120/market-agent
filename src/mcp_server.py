@@ -23,6 +23,7 @@ from src.tools.chip_data import (
     get_margin_trading,
 )
 from src.tools.company_insight import get_company_insights
+from src.tools.company_moat import get_company_moat_evidence
 from src.tools.discord_tools import send_channel_message
 from src.tools.discord_tools import send_dm as _discord_send_dm
 from src.tools.gmail_tools import create_draft as _gmail_create_draft
@@ -275,6 +276,32 @@ async def company_announcements(symbol: str) -> str:
     lines = [f"{symbol} 今日重大訊息（來源：{result['source']}）："]
     for it in items:
         lines.append(f"- [{it['date']} {it['time']}] {it['subject']}")
+    return "\n".join(lines)
+
+
+@_tool("company_moat_analysis")
+async def company_moat_analysis(symbol: str, refresh: bool = False) -> str:
+    """蒐集公司的技術、量產、供應鏈地位與競爭風險證據。適合長期競爭力問題；純報價或短線技術分析不需呼叫。"""
+    result = await get_company_moat_evidence(symbol, refresh=refresh)
+    labels = {
+        "technology": "技術／產品",
+        "commercialization": "量產／商業化",
+        "supply_chain": "供應鏈地位",
+        "competition_risk": "競爭／替代風險",
+    }
+    lines = [
+        f"{result.get('company_name') or symbol} 公司競爭力證據"
+        + ("（快取）" if result.get("cached") else "（新查詢）")
+    ]
+    for group, label in labels.items():
+        lines.append(f"\n【{label}】")
+        items = result.get("evidence", {}).get(group, [])
+        if not items:
+            lines.append("- 尚未找到足夠線索")
+            continue
+        for item in items:
+            lines.append(f"- {item['title']}｜{item['url']}")
+    lines.append("\n注意：以上是待查證證據，不代表技術獨有、供應鏈不可替代，亦不直接代表目前估值值得買進。")
     return "\n".join(lines)
 
 

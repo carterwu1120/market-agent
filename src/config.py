@@ -107,6 +107,9 @@ class Settings(BaseSettings):
     news_lookback_hours: int = 24
     session_ttl_seconds: int = 3600
     news_cache_ttl_seconds: int = 1800  # 30 min news cache
+    # Company technology/supply-chain evidence changes more slowly than quotes.
+    # Cache it so background discovery never repeats the same web research each cycle.
+    company_moat_cache_ttl_seconds: int = 604800  # 7 days
 
 
 settings = Settings()

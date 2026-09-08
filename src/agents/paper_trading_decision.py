@@ -16,6 +16,7 @@ from loguru import logger
 
 from src.llm import llm_chat_with_usage
 from src.tools.chip_data import get_institutional_trading
+from src.tools.company_moat import get_cached_company_moat
 from src.tools.knowledge_base import read_knowledge_base
 from src.tools.mops_data import get_recent_material_info_batch
 from src.tools.news_fetcher import _TICKER_NAMES, NewsArticle, fetch_targeted_news
@@ -70,6 +71,22 @@ def _news_for_symbol(symbol: str, articles: list[NewsArticle]) -> list[dict[str,
     return [_article_summary(article) for article in matched[:5]]
 
 
+def _compact_moat(value: Any) -> Any:
+    """Keep cached long-term context useful without bloating every decision prompt."""
+    if isinstance(value, Exception) or value is None:
+        return _safe_result(value)
+    compact = {
+        "collected_at": value.get("collected_at"),
+        "evidence": {},
+    }
+    for group, items in value.get("evidence", {}).items():
+        compact["evidence"][group] = [
+            {"title": item.get("title"), "url": item.get("url")}
+            for item in items[:2]
+        ]
+    return compact
+
+
 async def collect_decision_packets(targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Fetch all fixed data sources concurrently for at most two targets."""
     targets = targets[:2]
@@ -86,10 +103,15 @@ async def collect_decision_packets(targets: list[dict[str, Any]]) -> list[dict[s
         *(get_institutional_trading(symbol) for symbol in symbols),
         return_exceptions=True,
     )
-    technical, fundamental, chip, announcements, news = await asyncio.gather(
+    moat_task = asyncio.gather(
+        *(get_cached_company_moat(symbol) for symbol in symbols),
+        return_exceptions=True,
+    )
+    technical, fundamental, chip, moat, announcements, news = await asyncio.gather(
         technical_task,
         fundamental_task,
         chip_task,
+        moat_task,
         get_recent_material_info_batch(symbols, days=30),
         fetch_targeted_news(symbols),
         return_exceptions=True,
@@ -99,6 +121,7 @@ async def collect_decision_packets(targets: list[dict[str, Any]]) -> list[dict[s
         fundamental if not isinstance(fundamental, Exception) else [fundamental] * len(symbols)
     )
     chip = chip if not isinstance(chip, Exception) else [chip] * len(symbols)
+    moat = moat if not isinstance(moat, Exception) else [moat] * len(symbols)
     announcements = announcements if isinstance(announcements, dict) else {}
     news = news if isinstance(news, list) else []
 
@@ -110,6 +133,7 @@ async def collect_decision_packets(targets: list[dict[str, Any]]) -> list[dict[s
                 "technical": _safe_result(technical[index]),
                 "fundamental": _safe_result(fundamental[index]),
                 "chip": _safe_result(chip[index]),
+                "company_moat_evidence": _compact_moat(moat[index]),
                 "announcements": announcements.get(target["symbol"], []),
                 "news": _news_for_symbol(target["symbol"], news),
             }
