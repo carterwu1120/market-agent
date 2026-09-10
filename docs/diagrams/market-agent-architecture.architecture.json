@@ -11,13 +11,13 @@
         "id": "conversation",
         "label": "Discord 問答路徑",
         "focus": ["discord", "pipeline", "daily_brief", "research", "llm_cli", "mcp_tools"],
-        "note": "使用者訊息經意圖路由，進入固定日報或 MCP 研究流程。"
+        "note": "使用者訊息經意圖路由；長期競爭力問題可條件式調查技術與供應鏈證據。"
       },
       {
         "id": "paper_loop",
         "label": "紙上交易路徑",
         "focus": ["paper_loop", "decision", "market_data", "risk_actions", "broker", "sqlite"],
-        "note": "背景掃描收集資料，LLM 提案經程式風控後才會寫入模擬帳本。"
+        "note": "新標的預熱競爭力證據；緊盯只讀精簡快取，LLM 提案仍須通過程式風控。"
       },
       {
         "id": "execution_seam",
@@ -72,7 +72,7 @@
       "id": "mcp_tools",
       "type": "cloud",
       "label": "Market MCP Tools",
-      "sublabel": "技術、基本、籌碼、公告、新聞",
+      "sublabel": "技術、財報、事件與護城河調查",
       "pos": [1085, 285],
       "size": [220, 76]
     },
@@ -80,7 +80,7 @@
       "id": "paper_loop",
       "type": "backend",
       "label": "Paper Trading Loop",
-      "sublabel": "廣掃、緊盯、停損與條件單",
+      "sublabel": "廣掃、證據預熱、緊盯與停損",
       "pos": [315, 520],
       "size": [210, 80]
     },
@@ -88,7 +88,7 @@
       "id": "decision",
       "type": "backend",
       "label": "Decision Packet",
-      "sublabel": "結構化 LLM 交易提案",
+      "sublabel": "固定資料＋精簡競爭力快取",
       "pos": [600, 520],
       "size": [190, 80]
     },
@@ -122,7 +122,7 @@
       "id": "sqlite",
       "type": "database",
       "label": "SQLite",
-      "sublabel": "持倉、觀察名單、條件單與稽核紀錄",
+      "sublabel": "帳本、觀察名單、稽核與研究快取",
       "pos": [1110, 700],
       "size": [220, 80]
     }
@@ -148,7 +148,7 @@
     {"id": "research_llm", "from": "research", "to": "llm_cli", "label": "研究 Prompt", "variant": "emphasis"},
     {"id": "llm_mcp", "from": "llm_cli", "to": "mcp_tools", "label": "MCP 工具呼叫", "labelAt": [1065, 375]},
     {"id": "discord_loop", "from": "discord", "to": "paper_loop", "label": "啟動背景任務", "variant": "dashed"},
-    {"id": "loop_decision", "from": "paper_loop", "to": "decision", "variant": "emphasis"},
+    {"id": "loop_decision", "from": "paper_loop", "to": "decision", "label": "固定資料＋快取證據", "variant": "emphasis", "labelAt": [563, 516]},
     {"id": "loop_market", "from": "paper_loop", "to": "market_data", "label": "每分鐘行情檢查", "labelAt": [560, 650]},
     {"id": "decision_risk", "from": "decision", "to": "risk_actions", "label": "buy / sell / hold / condition", "labelAt": [833, 495]},
     {"id": "market_risk", "from": "market_data", "to": "risk_actions", "label": "報價與技術指標"},
@@ -159,7 +159,7 @@
     {
       "dot": "cyan",
       "title": "兩條執行路徑",
-      "items": ["Discord 研究保留開放式 MCP 工具選擇", "背景交易使用結構化決策與程式風控"]
+      "items": ["Discord 長期問題可主動調查公司護城河", "背景交易只在新標的預熱，緊盯不重複搜尋"]
     },
     {
       "dot": "emerald",
@@ -169,7 +169,7 @@
     {
       "dot": "rose",
       "title": "安全核心",
-      "items": ["LLM 只提出動作，不直接寫入帳本", "停損與條件單可在不呼叫 LLM 的情況下執行"]
+      "items": ["搜尋證據不等於獨家技術或合理估值", "LLM 只提出動作；風控與 Broker 才能寫入帳本"]
     }
   ]
 }

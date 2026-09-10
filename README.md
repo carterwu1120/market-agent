@@ -178,7 +178,7 @@ PAPER_TRADING_ENABLED=true
 
 啟動後在交易時間內（週一~五 09:00-13:30）自動背景運作，用 `/performance` 查看目前持倉與績效。不需要額外的帳號或憑證——完整運作方式見 [`docs/paper_trading.md`](docs/paper_trading.md)。
 
-為避免一次研究整份觀察名單造成 MCP timeout，緊盯循環每輪最多研究 3 檔並公平輪詢；失敗會記錄成 `research_failed`，可用 `/log` 查看。
+為避免一次研究整份觀察名單造成 timeout，緊盯循環每輪最多研究 2 檔並公平輪詢；失敗會記錄成 `research_failed`，可用 `/log` 查看。新加入觀察名單的標的每次廣掃最多預熱 2 檔公司競爭力證據，結果快取 7 天，緊盯循環不會重複上網搜尋。
 
 ---
 
@@ -279,6 +279,7 @@ market-agent/
     │   ├── cmoney_concept.py    # CMoney 概念股爬蟲（159 個主題分類）
     │   ├── theme_search.py      # 主題搜尋（CMoney 優先 + 新聞 fallback）
     │   ├── web_search.py        # 開放網頁搜尋（DuckDuckGo）
+    │   ├── company_moat.py      # 技術、量產、供應鏈與競爭風險證據（SQLite 快取）
     │   ├── mops_data.py         # TWSE MOPS 官方揭露（公告今日快照＋本機歷史封存／最新財報）
     │   ├── paper_trading_actions.py # 紙上交易下單邏輯：buy/sell/set_condition（見 docs/paper_trading.md）
     │   ├── broker.py             # Broker 介面（執行層的抽象，見 docs/adr/0002）
@@ -286,7 +287,7 @@ market-agent/
     │   └── knowledge_base.py    # 讀取 data/knowledge_base/ 檔案原文
     ├── memory/
     │   ├── store.py             # SQLite schema + connection helper
-    │   ├── cache_store.py       # 通用 TTL 快取（新聞/股票 API）
+    │   ├── cache_store.py       # 通用 TTL 快取（新聞、股票 API、公司競爭力證據）
     │   ├── session_store.py     # 頻道對話 session（SQLite）
     │   ├── stock_store.py       # 每日股票快照 upsert + 歷史查詢
     │   └── paper_trading_store.py # 紙上交易部位/觀察名單/條件單/稽核紀錄（開倉/平倉/set_condition/log_event）

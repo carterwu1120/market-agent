@@ -14,9 +14,9 @@ flowchart TD
         PTL["paper_trading_loop.py\n背景任務，PAPER_TRADING_ENABLED=true 才啟動"]
     end
 
-    PTL --> BROAD["廣掃\n_fetch_news + _extract_hot_stocks\n（跟 /brief 選熱門股同一套邏輯）"]
+    PTL --> BROAD["廣掃\n新聞選股；新標的最多 2 檔預熱公司競爭力證據"]
     PTL --> TIGHT["緊盯\n每輪最多兩個目標"]
-    TIGHT --> PACKET["固定並行資料收集\n技術 · 基本 · 籌碼 · 公告 · 新聞"]
+    TIGHT --> PACKET["固定並行資料收集\n技術 · 基本 · 籌碼 · 公告 · 新聞 · 精簡競爭力快取"]
     PACKET --> DECIDE["單次 LLM JSON 決策"]
     DECIDE --> GUARD["程式驗證範圍與風控"]
     GUARD --> SQLITE[("PaperBroker / SQLite\ndata/market_agent.db")]
@@ -37,7 +37,9 @@ flowchart TD
 
 ## 決策依據什麼資訊——背景交易不使用 ReAct
 
-實際運行紀錄顯示，讓無人值守的背景交易使用完整 ReAct，會對每檔股票反覆呼叫多個工具；當觀察名單和持倉一起送入時，經常跑滿 300 秒仍無法產生最終決策。因此背景流程改回可控的固定資料管線：程式並行取得技術面、基本面、三大法人、MOPS 公告與目標新聞，組成最多兩檔的 Decision Packet，再用一次無工具的 LLM 呼叫產生 JSON。
+實際運行紀錄顯示，讓無人值守的背景交易使用完整 ReAct，會對每檔股票反覆呼叫多個工具；當觀察名單和持倉一起送入時，經常跑滿 300 秒仍無法產生最終決策。因此背景流程改回可控的固定資料管線：程式並行取得技術面、基本面、三大法人、MOPS 公告與目標新聞，再附上已存在的精簡公司競爭力快取，組成最多兩檔的 Decision Packet，最後用一次無工具的 LLM 呼叫產生 JSON。
+
+公司競爭力資料採**條件式蒐集**：廣掃發現全新觀察標的時，每輪最多替 2 檔搜尋技術／產品、量產／商業化、供應鏈地位與競爭／替代風險，存入 SQLite 並快取 7 天。30 分鐘緊盯只讀快取且每類最多帶入 2 筆標題與網址，不會重新搜尋，也不會把完整搜尋摘要塞進每次 prompt。搜尋結果只是待查證證據；新技術不等於獨有、進入供應鏈不等於不可替代，公司品質也不等於目前估值適合買進。
 
 LLM 只提出 `buy`、`sell`、`hold`、`set_condition`、`cancel_condition` 或 `drop_watchlist`；程式會驗證股票必須在本輪範圍內、動作必須符合標的角色，再交給既有 `buy()`/`sell()`/條件單函式執行。Discord 的開放式投資研究仍保留 ReAct，背景自動化則優先追求可預測、可稽核與可熔斷。
 
@@ -47,7 +49,7 @@ LLM 只提出 `buy`、`sell`、`hold`、`set_condition`、`cancel_condition` 或
 
 修法是把工具清單拆成兩份（`src/llm_claude_code.py`）：
 
-- `USER_FACING_TOOL_NAMES`（14 個，不含交易工具）—— `run_research()` 的預設值，`/stock`、自由問答都用這份
+- `USER_FACING_TOOL_NAMES`（16 個，不含交易工具）—— `run_research()` 的預設值，`/stock`、自由問答都用這份；其中 `company_moat_analysis` 只在長期競爭力或明確技術／供應鏈事件時按需使用
 - `PAPER_TRADING_TOOL_NAMES` 保留給相容性與測試，但背景迴圈已不再把交易工具交給 LLM
 
 背景決策完全不暴露 MCP 或交易工具；它拿到的是程式已收集好的資料包。即使 LLM 回傳越權股票或不合法動作，executor 也會拒絕。
@@ -69,12 +71,12 @@ flowchart TD
     START(["每 60 秒檢查一次"]) --> TH{"現在是交易時間？\n週一~五 09:00-13:30"}
     TH -->|否| SLEEP["睡到下個交易時段開始"] --> START
     TH -->|是| B{"距上次廣掃\n≥ 40 分鐘？"}
-    B -->|是| BROAD["廣掃：抓新聞 → 找熱門股 → 加入觀察名單\n+ 過期保險清單 + 檢視長期持倉"]
+    B -->|是| BROAD["廣掃：抓新聞 → 找熱門股 → 加入觀察名單\n+ 新標的競爭力證據預熱（最多 2 檔）\n+ 過期保險清單 + 檢視長期持倉"]
     B -->|否| T
     BROAD --> T{"距上次緊盯\n≥ 30 分鐘？"}
     T -->|否| START
     T -->|是| GATHER["公平輪替：優先 1 檔觀察股 + 1 檔持倉\n總數最多 2 檔"]
-    GATHER --> RESEARCH["程式並行抓固定資料\n形成 Decision Packet"]
+    GATHER --> RESEARCH["程式並行抓固定資料＋讀取精簡競爭力快取\n形成 Decision Packet"]
     RESEARCH --> DECIDE["LLM 單次輸出 JSON 決策"]
     DECIDE --> ACT{"要交易嗎？"}
     ACT -->|買進| BUY["buy(horizon)\n風控驗證後交給 Broker"]
