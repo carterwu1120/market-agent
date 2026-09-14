@@ -14,6 +14,7 @@ from typing import Any
 
 from loguru import logger
 
+from src.agents.long_term_assessment import assess_long_term
 from src.llm import llm_chat_with_usage
 from src.tools.chip_data import get_institutional_trading
 from src.tools.company_moat import get_cached_company_moat
@@ -33,12 +34,17 @@ DECISION_SYSTEM = """你是台股紙上交易決策器。
 系統已提供本輪完整資料；禁止呼叫工具、補造數字或分析範圍外股票。
 
 只回傳合法 JSON，不要 Markdown：
-{"decisions":[{"symbol":"2330.TW","action":"hold","reason":"...","horizon":"short_term","allocation_pct":10,"condition":null,"condition_id":null}]}
+{"decisions":[{"symbol":"2330.TW","action":"watch_long_term","reason":"...","horizon":"long_term","allocation_pct":null,"condition":null,"condition_id":null}]}
 
-action 只能是 buy、sell、hold、set_condition、cancel_condition、drop_watchlist。
-- watchlist 標的只能 buy、set_condition、drop_watchlist；不可只說繼續觀察。
+action 只能是 buy、sell、hold、defer、watch_long_term、set_condition、
+cancel_condition、drop_watchlist。
+- watchlist 標的可用 buy、defer、watch_long_term、set_condition、drop_watchlist。
 - position 標的只能 sell、hold、set_condition、cancel_condition。
-- buy 必須提供 horizon 與 allocation_pct。
+- buy 必須明確提供 horizon 與 allocation_pct；禁止省略後默認短線。
+- watch_long_term 只適用 long_term_assessment.eligible_for_long_term=true；保留候選供後續研究。
+- defer 表示證據或價格尚未成熟，繼續留在一般觀察名單，不建立部位。
+- 短線依據是量價、技術面與籌碼；長線必須依據基本面、商業化、供應鏈與估值，
+  不能只因突破或熱門新聞分類為長線。
 - sell 的 reason 要說明出場原因。
 - set_condition 的 condition 必須包含 indicator、operator、threshold、action。
   買入條件可附 horizon/allocation_pct，賣出條件可附 exit_reason。
@@ -48,7 +54,8 @@ action 只能是 buy、sell、hold、set_condition、cancel_condition、drop_wat
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*|```", re.IGNORECASE)
 _VALID_ACTIONS = {
-    "buy", "sell", "hold", "set_condition", "cancel_condition", "drop_watchlist",
+    "buy", "sell", "hold", "defer", "watch_long_term", "set_condition",
+    "cancel_condition", "drop_watchlist",
 }
 
 
@@ -138,6 +145,9 @@ async def collect_decision_packets(targets: list[dict[str, Any]]) -> list[dict[s
                 "news": _news_for_symbol(target["symbol"], news),
             }
         )
+        packet["long_term_assessment"] = assess_long_term(
+            packet["fundamental"], packet["company_moat_evidence"]
+        )
         packets.append(packet)
     return packets
 
@@ -198,7 +208,9 @@ async def execute_decisions(
         handled_symbols.add(symbol)
 
         role = target["role"]
-        if role == "watchlist" and action not in {"buy", "set_condition", "drop_watchlist"}:
+        if role == "watchlist" and action not in {
+            "buy", "defer", "watch_long_term", "set_condition", "drop_watchlist",
+        }:
             results.append(
                 {"symbol": symbol, "action": action, "error": "invalid watchlist action"}
             )
@@ -211,30 +223,67 @@ async def execute_decisions(
 
         try:
             if action == "buy":
+                horizon = decision.get("horizon")
+                if horizon not in {"short_term", "long_term"}:
+                    raise ValueError("buy 必須明確提供 short_term 或 long_term horizon")
+                if decision.get("allocation_pct") is None:
+                    raise ValueError("buy 必須明確提供 allocation_pct")
                 result = await buy(
                     symbol,
                     reason,
-                    str(decision.get("horizon") or "short_term"),
+                    str(horizon),
                     float(decision.get("allocation_pct") or 10.0),
                 )
             elif action == "sell":
                 result = await sell(symbol, reason, "llm_signal")
             elif action == "drop_watchlist":
                 result = await drop_watchlist(symbol, reason)
+            elif action in {"defer", "watch_long_term"}:
+                from src.memory.paper_trading_store import update_watchlist_assessment
+
+                assessment = target.get("long_term_assessment") or {}
+                if action == "watch_long_term" and not assessment.get(
+                    "eligible_for_long_term", False
+                ):
+                    result = {"error": "long-term evidence threshold not met"}
+                else:
+                    existing_horizon = (target.get("watchlist") or {}).get(
+                        "strategy_horizon", "unclassified"
+                    )
+                    horizon = (
+                        "long_term" if action == "watch_long_term" else existing_horizon
+                    )
+                    updated = await update_watchlist_assessment(
+                        symbol,
+                        horizon,
+                        str(assessment.get("classification") or "insufficient_evidence"),
+                        int(assessment.get("score") or 0),
+                        reason,
+                    )
+                    result = {"success": updated, "deferred": True, "horizon": horizon}
             elif action == "set_condition":
                 condition = decision.get("condition") or {}
+                condition_action = str(condition.get("action", ""))
+                condition_horizon = condition.get("horizon") or decision.get("horizon")
+                if condition_action == "buy" and condition_horizon not in {
+                    "short_term", "long_term",
+                }:
+                    raise ValueError(
+                        "buy condition 必須明確提供 short_term 或 long_term horizon"
+                    )
+                if condition_action == "buy" and (
+                    condition.get("allocation_pct") is None
+                    and decision.get("allocation_pct") is None
+                ):
+                    raise ValueError("buy condition 必須明確提供 allocation_pct")
                 result = await set_condition(
                     symbol=symbol,
                     indicator=str(condition.get("indicator", "")),
                     operator=str(condition.get("operator", "")),
                     threshold=float(condition.get("threshold", 0)),
-                    action=str(condition.get("action", "")),
+                    action=condition_action,
                     reason=reason,
-                    horizon=str(
-                        condition.get("horizon")
-                        or decision.get("horizon")
-                        or "short_term"
-                    ),
+                    horizon=str(condition_horizon or "short_term"),
                     allocation_pct=float(
                         condition.get("allocation_pct")
                         or decision.get("allocation_pct")
@@ -265,7 +314,7 @@ async def run_paper_decision(targets: list[dict[str, Any]]) -> dict[str, Any]:
     packets = await collect_decision_packets(targets)
     decision_payload = await request_decisions(packets)
     decisions = decision_payload["decisions"]
-    results = await execute_decisions(decisions, targets)
+    results = await execute_decisions(decisions, packets)
     logger.info("paper decision completed: targets={} decisions={}", len(targets), len(results))
     return {
         "packets": packets,

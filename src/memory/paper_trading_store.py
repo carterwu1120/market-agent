@@ -184,10 +184,15 @@ def _expire_watchlist_sync(cutoff_ts: float) -> list[str]:
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT symbol FROM paper_watchlist WHERE first_seen < ?", (cutoff_ts,)
+            "SELECT symbol FROM paper_watchlist "
+            "WHERE first_seen < ? AND strategy_horizon != 'long_term'", (cutoff_ts,)
         ).fetchall()
         expired = [r["symbol"] for r in rows]
-        conn.execute("DELETE FROM paper_watchlist WHERE first_seen < ?", (cutoff_ts,))
+        conn.execute(
+            "DELETE FROM paper_watchlist "
+            "WHERE first_seen < ? AND strategy_horizon != 'long_term'",
+            (cutoff_ts,),
+        )
         conn.commit()
         return expired
     finally:
@@ -207,6 +212,47 @@ async def remove_from_watchlist(symbol: str) -> bool:
 
 async def get_watchlist() -> list[dict]:
     return await asyncio.to_thread(_get_watchlist_sync)
+
+
+def _update_watchlist_assessment_sync(
+    symbol: str,
+    strategy_horizon: str,
+    assessment_status: str,
+    assessment_score: int,
+    thesis: str,
+) -> bool:
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            """
+            UPDATE paper_watchlist
+            SET strategy_horizon = ?, assessment_status = ?,
+                assessment_score = ?, thesis = ?
+            WHERE symbol = ?
+            """,
+            (strategy_horizon, assessment_status, assessment_score, thesis, symbol),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+async def update_watchlist_assessment(
+    symbol: str,
+    strategy_horizon: str,
+    assessment_status: str,
+    assessment_score: int,
+    thesis: str,
+) -> bool:
+    return await asyncio.to_thread(
+        _update_watchlist_assessment_sync,
+        symbol,
+        strategy_horizon,
+        assessment_status,
+        assessment_score,
+        thesis,
+    )
 
 
 # ── Conditional orders ──────────────────────────────────────────────────

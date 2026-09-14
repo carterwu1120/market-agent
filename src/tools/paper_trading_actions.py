@@ -73,6 +73,12 @@ _VALID_CONDITION_ACTIONS = {"buy", "sell"}
 # rather than running them concurrently.
 _trade_lock = asyncio.Lock()
 
+_OPERATOR_ALIASES = {
+    "<": "lt", ">": "gt", "<=": "lte", ">=": "gte",
+    "less_than": "lt", "greater_than": "gt",
+    "less_than_or_equal": "lte", "greater_than_or_equal": "gte",
+}
+
 
 async def get_status() -> dict:
     """evaluate_paper_trades()'s shape plus an "equity" key (see
@@ -98,7 +104,7 @@ async def buy(
     watchlist if it was on one -- once bought, it is tracked as a position,
     not a candidate."""
     if horizon not in _VALID_HORIZONS:
-        horizon = "short_term"
+        return {"error": "horizon 必須明確是 short_term 或 long_term"}
 
     async with _trade_lock:
         existing = [p for p in await _broker.get_positions() if p["symbol"] == symbol]
@@ -238,6 +244,7 @@ async def set_condition(
     enforces them" shape as horizon/allocation_pct/the stop-loss safety net.
     Returns {"error": str} on an invalid indicator/operator/action, else
     {"success": True, "condition_id"}."""
+    operator = _OPERATOR_ALIASES.get(operator.strip().lower(), operator.strip().lower())
     if indicator not in _VALID_CONDITION_INDICATORS:
         return {"error": f"indicator 必須是以下之一：{sorted(_VALID_CONDITION_INDICATORS)}"}
     if operator not in _VALID_CONDITION_OPERATORS:
@@ -245,7 +252,7 @@ async def set_condition(
     if action not in _VALID_CONDITION_ACTIONS:
         return {"error": f"action 必須是以下之一：{sorted(_VALID_CONDITION_ACTIONS)}"}
     if action == "buy" and horizon not in _VALID_HORIZONS:
-        horizon = "short_term"
+        return {"error": "買入條件的 horizon 必須明確是 short_term 或 long_term"}
     if action == "sell" and exit_reason not in _VALID_EXIT_REASONS:
         exit_reason = "llm_signal"
 

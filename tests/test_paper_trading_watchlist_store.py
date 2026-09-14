@@ -15,6 +15,7 @@ from src.memory.paper_trading_store import (
     get_watchlist,
     remove_from_watchlist,
     touch_watchlist,
+    update_watchlist_assessment,
 )
 from src.memory.store import _connect, init_storage
 
@@ -81,3 +82,55 @@ async def test_expire_removes_only_entries_older_than_cutoff():
     assert expired == ["2454.TW"]
     remaining = {w["symbol"] for w in await get_watchlist()}
     assert remaining == {"2330.TW"}
+
+
+async def test_long_term_watchlist_survives_intraday_expiry():
+    now_ts = time.time()
+    await add_to_watchlist("2454.TW")
+    assert await update_watchlist_assessment(
+        "2454.TW", "long_term", "developing", 60, "等待合理估值"
+    )
+    conn = _connect()
+    conn.execute(
+        "UPDATE paper_watchlist SET first_seen = ? WHERE symbol = ?",
+        (now_ts - 10000, "2454.TW"),
+    )
+    conn.commit()
+    conn.close()
+
+    expired = await expire_watchlist(now_ts - 5000)
+
+    assert expired == []
+    item = (await get_watchlist())[0]
+    assert item["strategy_horizon"] == "long_term"
+    assert item["assessment_score"] == 60
+    assert item["thesis"] == "等待合理估值"
+
+
+async def test_existing_watchlist_schema_is_migrated_without_losing_rows():
+    conn = _connect()
+    conn.execute("DROP TABLE paper_watchlist")
+    conn.execute(
+        """
+        CREATE TABLE paper_watchlist (
+            symbol TEXT PRIMARY KEY,
+            first_seen REAL NOT NULL,
+            last_checked REAL NOT NULL DEFAULT 0,
+            reason TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO paper_watchlist (symbol, first_seen, reason) VALUES (?, ?, ?)",
+        ("2330.TW", 1.0, "existing"),
+    )
+    conn.commit()
+    conn.close()
+
+    await init_storage()
+
+    item = (await get_watchlist())[0]
+    assert item["symbol"] == "2330.TW"
+    assert item["strategy_horizon"] == "unclassified"
+    assert item["assessment_status"] == "insufficient_evidence"
+    assert item["assessment_score"] == 0

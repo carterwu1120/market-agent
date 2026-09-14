@@ -134,7 +134,11 @@ CREATE TABLE IF NOT EXISTS paper_watchlist (
     symbol TEXT PRIMARY KEY,
     first_seen REAL NOT NULL,
     last_checked REAL NOT NULL DEFAULT 0,
-    reason TEXT NOT NULL DEFAULT ''
+    reason TEXT NOT NULL DEFAULT '',
+    strategy_horizon TEXT NOT NULL DEFAULT 'unclassified',
+    assessment_status TEXT NOT NULL DEFAULT 'insufficient_evidence',
+    assessment_score INTEGER NOT NULL DEFAULT 0,
+    thesis TEXT NOT NULL DEFAULT ''
 );
 
 -- Agent-set conditional orders: the agent analyzes a symbol once and picks
@@ -204,6 +208,20 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
             "ALTER TABLE paper_positions ADD COLUMN allocation_amount REAL NOT NULL DEFAULT 0"
         )
         conn.commit()
+
+    watchlist_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(paper_watchlist)").fetchall()
+    }
+    watchlist_migrations = {
+        "strategy_horizon": "TEXT NOT NULL DEFAULT 'unclassified'",
+        "assessment_status": "TEXT NOT NULL DEFAULT 'insufficient_evidence'",
+        "assessment_score": "INTEGER NOT NULL DEFAULT 0",
+        "thesis": "TEXT NOT NULL DEFAULT ''",
+    }
+    for column, definition in watchlist_migrations.items():
+        if column not in watchlist_cols:
+            conn.execute(f"ALTER TABLE paper_watchlist ADD COLUMN {column} {definition}")
+    conn.commit()
 
 
 def _connect() -> sqlite3.Connection:

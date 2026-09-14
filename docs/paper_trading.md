@@ -41,7 +41,20 @@ flowchart TD
 
 公司競爭力資料採**條件式蒐集**：廣掃發現全新觀察標的時，每輪最多替 2 檔搜尋技術／產品、量產／商業化、供應鏈地位與競爭／替代風險，存入 SQLite 並快取 7 天。30 分鐘緊盯只讀快取且每類最多帶入 2 筆標題與網址，不會重新搜尋，也不會把完整搜尋摘要塞進每次 prompt。搜尋結果只是待查證證據；新技術不等於獨有、進入供應鏈不等於不可替代，公司品質也不等於目前估值適合買進。
 
-LLM 只提出 `buy`、`sell`、`hold`、`set_condition`、`cancel_condition` 或 `drop_watchlist`；程式會驗證股票必須在本輪範圍內、動作必須符合標的角色，再交給既有 `buy()`/`sell()`/條件單函式執行。Discord 的開放式投資研究仍保留 ReAct，背景自動化則優先追求可預測、可稽核與可熔斷。
+LLM 只提出 `buy`、`sell`、`hold`、`defer`、`watch_long_term`、`set_condition`、`cancel_condition` 或 `drop_watchlist`；程式會驗證股票必須在本輪範圍內、動作必須符合標的角色，再交給既有 `buy()`/`sell()`/條件單或觀察名單函式執行。Discord 的開放式投資研究仍保留 ReAct，背景自動化則優先追求可預測、可稽核與可熔斷。
+
+觀察標的另外可以回傳 `defer` 或 `watch_long_term`：前者表示資料或價格尚未成熟，保留在一般觀察名單；後者只有在長線評估達門檻時才會成功，會保存分類、分數與投資論點，並轉入低頻長期候選池。買進與買入條件單都必須明確提供 `short_term` 或 `long_term`，背景 executor 不再把缺失或錯誤值默默改成短線。
+
+### 長線評估第一版
+
+`long_term_assessment.py` 根據現有資料產生 0–100 的證據分數，檢查營收成長、ROE、毛利率、負債權益比、本益比，以及技術、量產／商業化、供應鏈與競爭風險線索。分類只有四種：
+
+- `verified_advantage`：基本面與商業化／供應鏈證據皆達初步門檻
+- `developing`：已有部分商業化或供應鏈線索，但仍待持續驗證
+- `theme_only`：目前主要只有技術或題材線索
+- `insufficient_evidence`：資料不足
+
+這是候選分流器，不是自動認定公司真的有護城河。只有前兩類能轉成長期觀察，而且 LLM 仍須分別說明投資論點、風險與估值；純突破、爆量或熱門新聞不能作為長線分類理由。
 
 ### Discord ReAct 的交易工具隔離
 
@@ -81,16 +94,20 @@ flowchart TD
     DECIDE --> ACT{"要交易嗎？"}
     ACT -->|買進| BUY["buy(horizon)\n風控驗證後交給 Broker"]
     ACT -->|賣出| SELL["sell()\n風控驗證後交給 Broker"]
+    ACT -->|轉長線| LONG["watch_long_term\n保存評分、論點並降低檢視頻率"]
+    ACT -->|資料未成熟| DEFER["defer\n保留一般觀察"]
     ACT -->|不追蹤了| DROP["drop_watchlist()\n從觀察名單移除"]
     ACT -->|不動作| HOLD["維持觀察 / 繼續持有"]
     BUY --> NOTIFY["發 Discord 通知"]
     SELL --> NOTIFY
     NOTIFY --> START
+    LONG --> START
+    DEFER --> START
     DROP --> START
     HOLD --> START
 ```
 
-持有中的部位跟觀察名單用同一個「緊盯」頻率查（每 30 分鐘）——但只有短線（`short_term`）部位會進緊盯；長期部位跟廣掃同頻（40 分鐘）。每輪總數最多兩檔，優先各取一檔觀察股與持倉；任一側沒有項目時，空出的名額才由另一側補上。機械停損與條件單仍每 60 秒檢查，不受 LLM 頻率影響。
+短線觀察名單與短線（`short_term`）持倉每 30 分鐘公平輪替；長期觀察候選與長期（`long_term`）持倉則使用 `PAPER_TRADING_LONG_TERM_REVIEW_SECONDS`，預設每 7 天檢視一次。長期候選不受 5 小時 `WATCHLIST_TTL` 的當日清理影響。每輪總數最多兩檔，機械停損與條件單仍每 60 秒檢查，不受 LLM 頻率影響。
 
 觀察名單依「最久未檢查、最早加入」排序，持倉也按最久未檢查輪替。決策失敗會寫入 `research_failed` 並進入 `PAPER_TRADING_FAILURE_COOLDOWN_SECONDS` 冷卻，避免同一批每 30 分鐘重複超時、讓後方標的永遠排不到。Agent 對觀察標的必須在買進、設定條件單、移出觀察名單之間做出處置；持倉才允許 `hold`。
 

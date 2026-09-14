@@ -5,6 +5,11 @@ import pytest
 from src.agents import paper_trading_loop as loop
 
 
+@pytest.fixture(autouse=True)
+def _stub_company_moat_lookup(monkeypatch):
+    monkeypatch.setattr(loop, "get_company_moat_evidence", AsyncMock(return_value={}))
+
+
 def test_select_due_watchlist_limits_and_rotates_oldest_first():
     now = 10_000.0
     watchlist = [
@@ -84,6 +89,36 @@ async def test_tight_scan_touches_only_successful_batch(monkeypatch):
     await loop._tight_scan()
 
     assert touch_watchlist.await_args.args[0] == ["0001.TW", "0002.TW"]
+
+
+@pytest.mark.asyncio
+async def test_tight_scan_excludes_long_term_watchlist(monkeypatch):
+    watchlist = [
+        {
+            "symbol": "2330.TW",
+            "first_seen": 1.0,
+            "last_checked": 0.0,
+            "strategy_horizon": "long_term",
+        },
+        {
+            "symbol": "2454.TW",
+            "first_seen": 2.0,
+            "last_checked": 0.0,
+            "strategy_horizon": "unclassified",
+        },
+    ]
+    run_decision = AsyncMock(return_value={"results": [], "cost_usd": 0.0})
+    monkeypatch.setattr(loop, "get_watchlist", AsyncMock(side_effect=[watchlist, watchlist]))
+    monkeypatch.setattr(loop, "get_open_positions", AsyncMock(return_value=[]))
+    monkeypatch.setattr(loop, "get_active_conditions", AsyncMock(return_value=[]))
+    monkeypatch.setattr(loop, "run_paper_decision", run_decision)
+    monkeypatch.setattr(loop, "log_event", AsyncMock())
+    monkeypatch.setattr(loop, "touch_watchlist", AsyncMock())
+
+    await loop._tight_scan()
+
+    targets = run_decision.await_args.args[0]
+    assert [target["symbol"] for target in targets] == ["2454.TW"]
 
 
 def test_build_targets_balances_watchlist_and_positions(monkeypatch):

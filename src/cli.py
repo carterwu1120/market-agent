@@ -117,7 +117,7 @@ async def _print_status() -> None:
             *[get_quote(w["symbol"]) for w in watchlist], return_exceptions=True
         )
         table = Table(title="觀察名單")
-        for col in ("股票", "加入時間", "現價", "緊盯狀態"):
+        for col in ("股票", "策略", "長線分數", "加入時間", "現價", "緊盯狀態"):
             table.add_column(col)
         for w, price in zip(watchlist, prices):
             if isinstance(price, Exception) or price.get("error"):
@@ -128,7 +128,15 @@ async def _print_status() -> None:
                 price_str = "N/A"
             first_seen = datetime.fromtimestamp(w["first_seen"], tz=_TW_TZ).strftime("%m/%d %H:%M")
             checked = "已緊盯過" if w["last_checked"] else "尚未緊盯"
-            table.add_row(w["symbol"], first_seen, price_str, checked)
+            horizon_label = {
+                "long_term": "長期觀察",
+                "short_term": "短線觀察",
+                "unclassified": "待分類",
+            }.get(w.get("strategy_horizon"), "待分類")
+            table.add_row(
+                w["symbol"], horizon_label, str(w.get("assessment_score", 0)),
+                first_seen, price_str, checked,
+            )
         console.print(table)
     else:
         console.print("[dim]觀察名單是空的[/dim]")

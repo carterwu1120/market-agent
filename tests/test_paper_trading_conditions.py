@@ -44,6 +44,14 @@ async def test_set_condition_rejects_invalid_operator():
     assert "error" in result
 
 
+async def test_set_condition_normalizes_common_operator_symbol():
+    result = await actions.set_condition("2330.TW", "close", ">=", 550.0, "buy")
+
+    assert result["success"] is True
+    condition = (await get_active_conditions())[0]
+    assert condition["operator"] == "gte"
+
+
 async def test_set_condition_rejects_invalid_action():
     result = await actions.set_condition("2330.TW", "close", "lt", 550.0, "hold")
     assert "error" in result

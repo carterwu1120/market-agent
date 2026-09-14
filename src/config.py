@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     paper_trading_max_llm_calls_per_day: int = 10
     paper_trading_max_timeouts_per_day: int = 3
     paper_trading_failure_cooldown_seconds: int = 3600
+    # Long-term candidates/positions are thesis driven, not intraday trades.
+    paper_trading_long_term_review_seconds: int = 604800  # 7 days
     # Concentration limits -- without these, paper_trade_buy has no ceiling
     # and the agent could keep opening positions indefinitely. Deliberately
     # set high (not a tight operational cap) -- paper trading risks no real

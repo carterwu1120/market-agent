@@ -71,3 +71,65 @@ async def test_execute_valid_watchlist_buy_uses_guarded_action(monkeypatch):
 
     assert results[0]["success"] is True
     buy.assert_awaited_once_with("2330.TW", "breakout", "short_term", 5.0)
+
+
+@pytest.mark.asyncio
+async def test_execute_rejects_buy_without_explicit_horizon(monkeypatch):
+    buy = AsyncMock()
+    monkeypatch.setattr(decision, "buy", buy)
+
+    results = await decision.execute_decisions(
+        [{"symbol": "2330.TW", "action": "buy", "reason": "test", "allocation_pct": 5}],
+        [{"symbol": "2330.TW", "role": "watchlist", "conditions": []}],
+    )
+
+    assert "horizon" in results[0]["error"]
+    buy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_watch_long_term_persists_assessment(monkeypatch):
+    update = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "src.memory.paper_trading_store.update_watchlist_assessment", update
+    )
+    target = {
+        "symbol": "2330.TW",
+        "role": "watchlist",
+        "watchlist": {"strategy_horizon": "unclassified"},
+        "long_term_assessment": {
+            "eligible_for_long_term": True,
+            "classification": "developing",
+            "score": 62,
+        },
+        "conditions": [],
+    }
+
+    results = await decision.execute_decisions(
+        [{"symbol": "2330.TW", "action": "watch_long_term", "reason": "等待估值"}],
+        [target],
+    )
+
+    assert results[0]["success"] is True
+    update.assert_awaited_once_with("2330.TW", "long_term", "developing", 62, "等待估值")
+
+
+@pytest.mark.asyncio
+async def test_watch_long_term_rejects_weak_evidence(monkeypatch):
+    update = AsyncMock()
+    monkeypatch.setattr(
+        "src.memory.paper_trading_store.update_watchlist_assessment", update
+    )
+
+    results = await decision.execute_decisions(
+        [{"symbol": "2330.TW", "action": "watch_long_term", "reason": "題材"}],
+        [{
+            "symbol": "2330.TW",
+            "role": "watchlist",
+            "long_term_assessment": {"eligible_for_long_term": False},
+            "conditions": [],
+        }],
+    )
+
+    assert results[0]["error"] == "long-term evidence threshold not met"
+    update.assert_not_awaited()

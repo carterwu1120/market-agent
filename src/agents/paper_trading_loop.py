@@ -137,8 +137,13 @@ def _build_targets(
     if len(due_watchlist) < watch_limit and positions:
         position_batch = _select_positions(positions, DECISION_BATCH_SIZE - len(due_watchlist))
 
+    watchlist_by_symbol = {item["symbol"]: item for item in watchlist}
     targets = [
-        {"symbol": symbol, "role": "watchlist"}
+        {
+            "symbol": symbol,
+            "role": "watchlist",
+            "watchlist": watchlist_by_symbol[symbol],
+        }
         for symbol in due_watchlist
     ]
     targets.extend(
@@ -441,8 +446,19 @@ async def _broad_scan() -> None:
 
 
 async def _review_long_term_positions() -> None:
+    now_ts = _tw_now().timestamp()
     long_term = await get_open_positions(horizon="long_term")
-    if not long_term:
+    due_positions = [
+        item for item in long_term
+        if now_ts - _position_last_checked.get(item["symbol"], 0.0)
+        >= settings.paper_trading_long_term_review_seconds
+    ]
+    long_watchlist = [
+        item for item in await get_watchlist()
+        if item.get("strategy_horizon") == "long_term"
+        and now_ts - item["last_checked"] >= settings.paper_trading_long_term_review_seconds
+    ]
+    if not due_positions and not long_watchlist:
         return
 
     limit_reason = _decision_limit_reason(_tw_now())
@@ -451,16 +467,33 @@ async def _review_long_term_positions() -> None:
         logger.info("paper_trading_loop: long-term review skipped, decision limit reached")
         return
 
-    selected = _select_positions(long_term, DECISION_BATCH_SIZE)
-    targets = [
+    selected = _select_positions(due_positions, 1 if long_watchlist else DECISION_BATCH_SIZE)
+    targets: list[dict] = [
         {"symbol": position["symbol"], "role": "position", "position": position}
         for position in selected
     ]
+    remaining = DECISION_BATCH_SIZE - len(targets)
+    targets.extend(
+        {
+            "symbol": item["symbol"],
+            "role": "watchlist",
+            "watchlist": item,
+        }
+        for item in sorted(long_watchlist, key=lambda item: item["last_checked"])[:remaining]
+    )
     _attach_conditions(targets, await get_active_conditions())
+    # Refresh only for this bounded weekly batch. Decision Packet collection
+    # immediately reuses the SQLite cache and performs no duplicate search.
+    await asyncio.gather(
+        *(get_company_moat_evidence(target["symbol"]) for target in targets),
+        return_exceptions=True,
+    )
     logger.info(
-        "paper_trading_loop: reviewing {} of {} long-term position(s)",
+        "paper_trading_loop: reviewing {} target(s): {} long-term position(s), "
+        "{} long-term watchlist candidate(s)",
         len(targets),
         len(long_term),
+        len(long_watchlist),
     )
     try:
         _record_llm_call()
@@ -468,7 +501,16 @@ async def _review_long_term_positions() -> None:
         await _track_cost(result.get("cost_usd", 0.0))
         conclusion = _decision_summary(result)
         for target in targets:
-            _position_last_checked[target["symbol"]] = _tw_now().timestamp()
+            if target["role"] == "position":
+                _position_last_checked[target["symbol"]] = now_ts
+        remaining_watchlist = {item["symbol"] for item in await get_watchlist()}
+        await touch_watchlist(
+            [
+                target["symbol"] for target in targets
+                if target["role"] == "watchlist" and target["symbol"] in remaining_watchlist
+            ],
+            now_ts,
+        )
         logger.info(f"paper_trading_loop: long-term review conclusion — {conclusion}")
         await log_event("long_term_review", conclusion)
     except Exception as exc:
@@ -482,7 +524,10 @@ async def _tight_scan() -> None:
     positions only -- long_term positions are handled by the broad scan
     instead, at a much lower frequency."""
     now_ts = _tw_now().timestamp()
-    watchlist = await get_watchlist()
+    watchlist = [
+        item for item in await get_watchlist()
+        if item.get("strategy_horizon") != "long_term"
+    ]
     short_term_positions = await get_open_positions(horizon="short_term")
 
     targets, queued_watchlist_count = _build_targets(watchlist, short_term_positions, now_ts)
@@ -503,6 +548,14 @@ async def _tight_scan() -> None:
         len(short_term_positions),
     )
     _attach_conditions(targets, await get_active_conditions())
+    # Every candidate eventually receives the long-term evidence classifier,
+    # even when it was outside the broad scan's two-symbol prewarm cap. Cache
+    # hits are local SQLite reads; only missing evidence performs web search.
+    candidate_targets = [target for target in targets if target["role"] == "watchlist"]
+    await asyncio.gather(
+        *(get_company_moat_evidence(target["symbol"]) for target in candidate_targets),
+        return_exceptions=True,
+    )
 
     try:
         _record_llm_call()

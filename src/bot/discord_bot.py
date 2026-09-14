@@ -138,7 +138,14 @@ async def _build_paper_status_message() -> str:
 
     lines.extend(["", f"**觀察名單（{len(watchlist)} 檔）**"])
     if watchlist:
-        lines.append("- " + "、".join(item["symbol"] for item in watchlist[:20]))
+        for item in watchlist[:20]:
+            horizon_label = {
+                "long_term": "長期觀察",
+                "short_term": "短線觀察",
+                "unclassified": "待分類",
+            }.get(item.get("strategy_horizon"), "待分類")
+            score = int(item.get("assessment_score") or 0)
+            lines.append(f"- {item['symbol']}｜{horizon_label}｜長線證據分數 {score}")
         if len(watchlist) > 20:
             lines.append(f"- 另有 {len(watchlist) - 20} 檔未列出")
     else:
