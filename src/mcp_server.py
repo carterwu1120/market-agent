@@ -400,6 +400,8 @@ async def paper_trade_status() -> str:
     equity_line = (
         f"[模擬帳戶] 可用現金 {eq['current_cash']:.0f} / 起始本金 {eq['starting_capital']:.0f}，"
         f"目前總資產 {eq['current_equity']:.0f}（累計報酬 {eq['total_return_pct']}%）"
+        if eq['current_equity'] is not None else
+        f"估值不完整（缺報價：{', '.join(eq['missing_quotes'])}）；總報酬暫不計算"
     )
     lines = []
     if not result["positions"]:

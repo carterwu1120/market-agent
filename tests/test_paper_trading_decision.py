@@ -18,6 +18,29 @@ def test_parse_decisions_rejects_missing_array():
         decision.parse_decisions("{}")
 
 
+async def test_decision_audit_links_inputs_proposal_and_execution(monkeypatch):
+    packets = [{"symbol": "2330.TW", "role": "position"}]
+    proposal = {"decisions": [{"symbol": "2330.TW", "action": "hold"}], "cost_usd": 0}
+    results = [{"symbol": "2330.TW", "action": "hold", "success": True}]
+    audit = AsyncMock()
+    monkeypatch.setattr(decision, "collect_decision_packets", AsyncMock(return_value=packets))
+    monkeypatch.setattr(decision, "request_decisions", AsyncMock(return_value=proposal))
+    monkeypatch.setattr(decision, "execute_decisions", AsyncMock(return_value=results))
+    monkeypatch.setattr(decision, "read_knowledge_base", lambda: "test strategy")
+    monkeypatch.setattr(decision, "log_event", audit)
+    await decision.run_paper_decision(packets)
+    calls = audit.await_args_list
+    assert [call.args[0] for call in calls] == [
+        "decision_input", "decision_proposed", "decision_executed",
+    ]
+    payloads = [json.loads(call.args[1]) for call in calls]
+    assert len({payload["id"] for payload in payloads}) == 1
+    assert payloads[0]["packets"] == packets
+    assert payloads[0]["knowledge"] == "test strategy"
+    assert payloads[1]["decisions"] == proposal["decisions"]
+    assert payloads[2]["results"] == results
+
+
 @pytest.mark.asyncio
 async def test_request_decisions_uses_one_shot_chat_without_tools(monkeypatch):
     llm_chat = AsyncMock(

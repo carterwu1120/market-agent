@@ -16,6 +16,8 @@ for why that split exists.
 from __future__ import annotations
 
 import asyncio
+import operator
+import time
 
 from src.agents.paper_trading import (
     calc_allocation,
@@ -93,7 +95,8 @@ async def get_status() -> dict:
 
 
 async def buy(
-    symbol: str, reason: str, horizon: str = "short_term", allocation_pct: float = 10.0
+    symbol: str, reason: str, horizon: str = "short_term", allocation_pct: float = 10.0,
+    *, condition: dict | None = None,
 ) -> dict:
     """Opens a position at the configured provider's current quote. allocation_pct (% of the
     fixed starting capital, not current equity) is the agent's own call on
@@ -134,6 +137,24 @@ async def buy(
             return {
                 "error": f"{symbol} 無法取得行情，交易取消：{quote.get('error', '無資料')}"
             }
+
+        if condition is not None:
+            active = await get_active_conditions()
+            if not any(c["id"] == condition["id"] for c in active):
+                return {"error": "條件已取消或已成交"}
+            age = time.time() - condition["created_at"]
+            if age >= settings.paper_trading_condition_ttl_seconds:
+                return {"error": "買入條件已過期，需重新評估"}
+            if condition["indicator"] == "close":
+                compare = {
+                    "lt": operator.lt, "lte": operator.le,
+                    "gt": operator.gt, "gte": operator.ge,
+                }
+                if not compare[condition["operator"]](price, condition["threshold"]):
+                    return {"error": "最新成交參考價已不符合條件"}
+                ceiling = condition["threshold"] * (1 + settings.paper_trading_max_chase_pct / 100)
+                if condition["operator"] in {"gt", "gte"} and price > ceiling:
+                    return {"error": "最新成交參考價超過追價上限"}
 
         shares, allocation_amount = calc_allocation(allocation_pct, price)
         if shares < 1:

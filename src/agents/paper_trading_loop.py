@@ -25,6 +25,7 @@ for candidates the agent simply never acts on.
 from __future__ import annotations
 
 import asyncio
+import json
 import operator as _operator
 import time
 from datetime import datetime, timedelta, timezone
@@ -34,11 +35,16 @@ from loguru import logger
 
 from src.agents.daily_brief import _fetch_news
 from src.agents.market_agent import _extract_hot_stocks
-from src.agents.paper_trading import calc_pnl_pct
+from src.agents.paper_trading import (
+    calc_pnl_pct,
+    evaluate_paper_trades,
+    simulate_portfolio_equity,
+)
 from src.agents.paper_trading_decision import run_paper_decision
 from src.config import settings
 from src.memory.paper_trading_store import (
     add_to_watchlist,
+    cancel_condition,
     expire_watchlist,
     get_active_conditions,
     get_open_positions,
@@ -328,17 +334,21 @@ async def _check_conditions() -> None:
     time to re-ask the same question, then executes buy()/sell() directly
     the instant a condition is true.
 
-    A condition fires once: mark_condition_triggered() runs regardless of
-    whether the resulting trade actually succeeds, because buy()/sell()
-    already reject invalid trades (insufficient cash, position cap,
-    duplicate symbol) on their own -- retrying an already-rejected trade
-    every tick would just fail the same way forever."""
+    Only a successful execution consumes the condition. Failed trades retry
+    on the next tick; buy conditions expire after their configured TTL."""
     conditions = await get_active_conditions()
     if not conditions:
         return
 
     by_symbol: dict[str, list[dict]] = {}
     for c in conditions:
+        if (
+            c["action"] == "buy"
+            and time.time() - c["created_at"] >= settings.paper_trading_condition_ttl_seconds
+        ):
+            await cancel_condition(c["id"])
+            await log_event("condition_expired", f"id={c['id']}", symbol=c["symbol"])
+            continue
         by_symbol.setdefault(c["symbol"], []).append(c)
 
     for symbol, symbol_conditions in by_symbol.items():
@@ -373,7 +383,6 @@ async def _check_conditions() -> None:
             if not _CONDITION_OPERATORS[c["operator"]](value, c["threshold"]):
                 continue
 
-            await mark_condition_triggered(c["id"])
             logger.info(
                 f"paper_trading_loop: condition {c['id']} triggered for {symbol} "
                 f"({c['indicator']}={value} {c['operator']} {c['threshold']}) -> {c['action']}"
@@ -386,14 +395,21 @@ async def _check_conditions() -> None:
             )
             if c["action"] == "buy":
                 result = await buy(
-                    symbol, c["reason"] or "條件觸發", c["horizon"], c["allocation_pct"]
+                    symbol, c["reason"] or "條件觸發", c["horizon"], c["allocation_pct"],
+                    condition=c,
                 )
             else:
                 result = await sell(symbol, c["reason"] or "條件觸發", c["exit_reason"])
             if result.get("error"):
+                await log_event(
+                    "condition_execution_failed", f"id={c['id']} {result['error']}",
+                    symbol=symbol,
+                )
                 logger.warning(
                     f"paper_trading_loop: condition {c['id']} trade failed: {result['error']}"
                 )
+            elif result.get("success"):
+                await mark_condition_triggered(c["id"])
 
 
 async def _broad_scan() -> None:
@@ -600,8 +616,7 @@ async def _tight_scan() -> None:
     await touch_watchlist(still_due, now_ts)
 
 
-async def run() -> None:
-    await init_storage()
+async def _research_loop() -> None:
     logger.info(
         f"paper_trading_loop: starting "
         f"(broad={BROAD_SCAN_INTERVAL}s, tight={TIGHT_SCAN_INTERVAL}s, "
@@ -622,11 +637,6 @@ async def run() -> None:
 
         now_ts = now.timestamp()
         try:
-            # Every tick, not gated by an interval -- cheap (price/technical
-            # fetch only, no LLM call) and must not wait on the same cadence
-            # as the agentic scans they stand in for or guard against.
-            await _check_mechanical_stop_loss()
-            await _check_conditions()
             if now_ts - last_broad >= BROAD_SCAN_INTERVAL:
                 await _broad_scan()
                 last_broad = now_ts
@@ -637,3 +647,32 @@ async def run() -> None:
             logger.error(f"paper_trading_loop: cycle error: {exc}", exc_info=True)
 
         await asyncio.sleep(TICK_SECONDS)
+
+
+async def _mechanical_loop(check, interval: float = TICK_SECONDS) -> None:
+    """A dedicated task; research latency cannot delay mechanical checks."""
+    while True:
+        if _is_trading_hours(_tw_now()):
+            try:
+                await check()
+            except Exception as exc:
+                logger.exception("Mechanical check {} failed", check.__name__)
+                await log_event("risk_check_failed", f"{check.__name__}: {exc}")
+        await asyncio.sleep(interval)
+
+
+async def _snapshot_equity() -> None:
+    result = await evaluate_paper_trades()
+    await log_event("equity_snapshot", json.dumps({
+        "equity": simulate_portfolio_equity(result["positions"]),
+        "positions": result["positions"],
+    }, ensure_ascii=False, default=str))
+
+
+async def run() -> None:
+    await init_storage()
+    async with asyncio.TaskGroup() as tasks:
+        tasks.create_task(_mechanical_loop(_check_mechanical_stop_loss))
+        tasks.create_task(_mechanical_loop(_check_conditions))
+        tasks.create_task(_research_loop())
+        tasks.create_task(_mechanical_loop(_snapshot_equity, 1800))

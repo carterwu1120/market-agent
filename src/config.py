@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     # knowledge_base notes. Long-term tolerates a wider drawdown than
     # short-term by design (values are magnitudes; a position is force-sold
     # when pnl_pct <= -this value).
+    paper_trading_condition_ttl_seconds: int = 86400
+    paper_trading_max_chase_pct: float = 2.0
     paper_trading_short_term_stop_loss_pct: float = 15.0
     paper_trading_long_term_stop_loss_pct: float = 20.0
     # Capital simulation -- lets /performance report a realistic equity

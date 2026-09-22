@@ -84,6 +84,17 @@ def test_equity_with_no_positions_equals_starting_capital():
     assert result["realized_max_drawdown_pct"] == 0.0
 
 
+def test_missing_quote_does_not_treat_position_as_total_loss():
+    result = simulate_portfolio_equity([{
+        "status": "open", "symbol": "2330.TW", "shares": 500,
+        "entry_price": 100.0, "current_price": None,
+    }])
+    assert result["current_cash"] == 450_000
+    assert result["current_equity"] is None
+    assert result["total_return_pct"] is None
+    assert result["missing_quotes"] == ["2330.TW"]
+
+
 def test_equity_marks_open_position_to_market():
     positions = [{
         "status": "open", "symbol": "2330.TW", "shares": 500,

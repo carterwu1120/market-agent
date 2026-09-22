@@ -100,6 +100,8 @@ async def _build_paper_status_message() -> str:
             f"現金：{equity['current_cash']:,.0f}｜總資產："
             f"{equity['current_equity']:,.0f}｜累計報酬："
             f"{equity['total_return_pct']:+.2f}%"
+            if equity['current_equity'] is not None else
+            f"估值不完整（缺報價：{', '.join(equity['missing_quotes'])}）；總報酬暫不計算"
         ),
         (
             f"持有中：{result['open_count']}｜已平倉：{result['closed_count']}｜"
@@ -322,6 +324,8 @@ async def cmd_performance(interaction: discord.Interaction):
             f"{eq['current_equity']:,.0f}（累計報酬 {eq['total_return_pct']}%，"
             f"可用現金 {eq['current_cash']:,.0f}，"
             f"已平倉最大回撤 {eq['realized_max_drawdown_pct']}%）"
+            if eq['current_equity'] is not None else
+            f"估值不完整（缺報價：{', '.join(eq['missing_quotes'])}）；總報酬暫不計算"
         ),
         "",
     ]

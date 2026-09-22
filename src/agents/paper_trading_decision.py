@@ -10,12 +10,14 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import uuid
 from typing import Any
 
 from loguru import logger
 
 from src.agents.long_term_assessment import assess_long_term
 from src.llm import llm_chat_with_usage
+from src.memory.paper_trading_store import log_event
 from src.tools.chip_data import get_institutional_trading
 from src.tools.company_moat import get_cached_company_moat
 from src.tools.knowledge_base import read_knowledge_base
@@ -311,10 +313,21 @@ async def execute_decisions(
 
 
 async def run_paper_decision(targets: list[dict[str, Any]]) -> dict[str, Any]:
+    audit_id = uuid.uuid4().hex
     packets = await collect_decision_packets(targets)
+    await log_event("decision_input", json.dumps({
+        "id": audit_id, "version": "paper-decision-v2", "packets": packets,
+        "system": DECISION_SYSTEM, "knowledge": read_knowledge_base(),
+    }, ensure_ascii=False, default=str))
     decision_payload = await request_decisions(packets)
     decisions = decision_payload["decisions"]
+    await log_event("decision_proposed", json.dumps({
+        "id": audit_id, **decision_payload,
+    }, ensure_ascii=False, default=str))
     results = await execute_decisions(decisions, packets)
+    await log_event("decision_executed", json.dumps({
+        "id": audit_id, "results": results,
+    }, ensure_ascii=False, default=str))
     logger.info("paper decision completed: targets={} decisions={}", len(targets), len(results))
     return {
         "packets": packets,

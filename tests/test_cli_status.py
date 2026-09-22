@@ -31,6 +31,15 @@ async def test_status_with_empty_state_does_not_crash():
     await _print_status()  # must not raise
 
 
+async def test_status_missing_quote_shows_incomplete_valuation(monkeypatch):
+    from src.agents import paper_trading
+    from src.cli import _print_status
+
+    await open_position("2330.TW", entry_price=100, shares=10)
+    monkeypatch.setattr(paper_trading, "get_quote", AsyncMock(return_value={"error": "offline"}))
+    await _print_status()
+
+
 async def test_status_with_position_watchlist_and_condition_does_not_crash(monkeypatch):
     import src.agents.paper_trading as paper_trading_module
     import src.tools.market_data as market_data_module

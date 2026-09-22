@@ -76,6 +76,8 @@ async def _print_status() -> None:
         f"（累計報酬 [{return_style}]{eq['total_return_pct']}%[/{return_style}]）\n"
         f"可用現金：{eq['current_cash']:,.0f}　"
         f"已平倉最大回撤：{eq['realized_max_drawdown_pct']}%"
+        if eq['current_equity'] is not None else
+        f"估值不完整（缺報價：{', '.join(eq['missing_quotes'])}）；總報酬暫不計算"
     )
 
     open_positions = [p for p in result["positions"] if p["status"] == "open"]

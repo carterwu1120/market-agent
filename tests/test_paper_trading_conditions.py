@@ -189,3 +189,36 @@ async def test_missing_indicator_value_skips_without_crashing(monkeypatch):
 
     buy_mock.assert_not_awaited()
     assert len(await get_active_conditions()) == 1
+
+
+async def test_expired_buy_is_cancelled_without_execution(monkeypatch):
+    await actions.set_condition("2330.TW", "close", "gte", 100, "buy")
+    monkeypatch.setattr(settings, "paper_trading_condition_ttl_seconds", 0)
+    buy_mock = AsyncMock()
+    monkeypatch.setattr(loop, "buy", buy_mock)
+    await loop._check_conditions()
+    buy_mock.assert_not_awaited()
+    assert await get_active_conditions() == []
+
+
+async def test_failed_sell_remains_active_until_success(monkeypatch):
+    await actions.set_condition("2330.TW", "close", "lt", 150, "sell")
+    monkeypatch.setattr(loop, "get_quote", AsyncMock(return_value=_PRICE_OK))
+    monkeypatch.setattr(loop, "get_technical_indicators", AsyncMock(return_value=_TECHNICAL_OK))
+    monkeypatch.setattr(loop, "sell", AsyncMock(side_effect=[
+        {"error": "quote unavailable"}, {"success": True},
+    ]))
+    await loop._check_conditions()
+    assert len(await get_active_conditions()) == 1
+    await loop._check_conditions()
+    assert await get_active_conditions() == []
+
+
+@pytest.mark.parametrize("price", [99, 103])
+async def test_buy_revalidates_actual_execution_quote(monkeypatch, price):
+    await actions.set_condition("2330.TW", "close", "gte", 100, "buy")
+    condition = (await get_active_conditions())[0]
+    monkeypatch.setattr(actions, "get_quote", AsyncMock(return_value={"price": price}))
+    result = await actions.buy("2330.TW", "test", condition=condition)
+    assert "error" in result
+    assert await actions._broker.get_positions() == []

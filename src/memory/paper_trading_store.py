@@ -123,6 +123,7 @@ async def close_position(position_id: int, exit_price: float, exit_reason: str =
         await asyncio.to_thread(_close_position_sync, position_id, exit_price, exit_reason)
     except Exception as exc:
         logger.warning(f"paper_positions: close_position failed for id={position_id}: {exc}")
+        raise
 
 
 async def get_open_positions(horizon: str | None = None) -> list[dict]:

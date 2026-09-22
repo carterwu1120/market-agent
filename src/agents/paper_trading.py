@@ -133,7 +133,11 @@ def simulate_portfolio_equity(scored_positions: list[dict]) -> dict:
         for p in scored_positions
         if p["status"] == "open" and p.get("current_price") is not None
     )
-    current_equity = cash + open_value
+    missing_quotes = [
+        p["symbol"] for p in scored_positions
+        if p["status"] == "open" and p.get("current_price") is None
+    ]
+    current_equity = cash + open_value if not missing_quotes else None
 
     # Sort by closed_at (a real timestamp) not exit_date (day-granularity
     # string) -- same-day closes would otherwise tie-break on insertion
@@ -156,10 +160,12 @@ def simulate_portfolio_equity(scored_positions: list[dict]) -> dict:
     return {
         "starting_capital": starting,
         "current_cash": round(cash, 0),
-        "open_positions_value": round(open_value, 0),
-        "current_equity": round(current_equity, 0),
+        "valuation_complete": not missing_quotes,
+        "missing_quotes": missing_quotes,
+        "open_positions_value": round(open_value, 0) if not missing_quotes else None,
+        "current_equity": round(current_equity, 0) if current_equity is not None else None,
         "total_return_pct": round((current_equity - starting) / starting * 100, 2)
-        if starting else None,
+        if starting and current_equity is not None else None,
         "realized_max_drawdown_pct": round(max_drawdown_pct, 2),
         "equity_curve": curve,
     }
