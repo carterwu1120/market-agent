@@ -58,3 +58,13 @@ async def test_buy_rejected_when_price_too_high_for_min_allocation(monkeypatch):
 
     assert "error" in result
     assert "過高" in result["error"]
+
+
+async def test_buy_rejects_stale_fallback_quote(monkeypatch):
+    monkeypatch.setattr(
+        actions, "get_quote",
+        AsyncMock(return_value={"price": 100.0, "is_stale": True, "error": "timeout"}),
+    )
+    result = await actions.buy("2330.TW", "test")
+    assert "行情已過期" in result["error"]
+    assert await actions._broker.get_positions() == []

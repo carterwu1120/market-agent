@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     # Quote source used by trading execution, stop-losses, conditions, and
     # mark-to-market reporting. Historical/technical data remains on Yahoo.
     market_data_provider: Literal["yahoo"] = "yahoo"
+    quote_cache_ttl_seconds: float = 15.0
+    quote_stale_fallback_seconds: float = 300.0
 
     @property
     def allowed_channels(self) -> set[str]:

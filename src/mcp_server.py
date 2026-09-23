@@ -403,6 +403,8 @@ async def paper_trade_status() -> str:
         if eq['current_equity'] is not None else
         f"估值不完整（缺報價：{', '.join(eq['missing_quotes'])}）；總報酬暫不計算"
     )
+    if eq.get("stale_quotes"):
+        equity_line += f"；使用最後有效報價：{', '.join(eq['stale_quotes'])}"
     lines = []
     if not result["positions"]:
         lines.append("目前沒有任何紙上交易部位")

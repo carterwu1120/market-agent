@@ -176,6 +176,28 @@ async def test_streak_not_fetched_when_no_condition_references_it(monkeypatch):
     streak_mock.assert_not_awaited()
 
 
+async def test_close_only_condition_does_not_fetch_technical_data(monkeypatch):
+    await actions.set_condition("2330.TW", "close", "lt", 150.0, "buy")
+    monkeypatch.setattr(loop, "get_quote", AsyncMock(return_value=_PRICE_OK))
+    technical_mock = AsyncMock()
+    monkeypatch.setattr(loop, "get_technical_indicators", technical_mock)
+    monkeypatch.setattr(loop, "buy", AsyncMock(return_value={"success": True}))
+    await loop._check_conditions()
+    technical_mock.assert_not_awaited()
+
+
+async def test_stale_quote_does_not_trigger_close_condition(monkeypatch):
+    await actions.set_condition("2330.TW", "close", "lt", 150.0, "buy")
+    monkeypatch.setattr(
+        loop, "get_quote",
+        AsyncMock(return_value={"price": 100.0, "is_stale": True, "error": "timeout"}),
+    )
+    buy_mock = AsyncMock()
+    monkeypatch.setattr(loop, "buy", buy_mock)
+    await loop._check_conditions()
+    buy_mock.assert_not_awaited()
+
+
 async def test_missing_indicator_value_skips_without_crashing(monkeypatch):
     await actions.set_condition("2330.TW", "rsi_14", "lt", 30.0, "buy")
     monkeypatch.setattr(loop, "get_quote", AsyncMock(return_value=_PRICE_OK))

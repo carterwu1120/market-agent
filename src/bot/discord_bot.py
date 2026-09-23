@@ -108,6 +108,8 @@ async def _build_paper_status_message() -> str:
             f"已實現最大回撤：{equity['realized_max_drawdown_pct']:.2f}%"
         ),
     ]
+    if equity.get("stale_quotes"):
+        lines.append(f"⚠️ 使用最後有效報價估值：{', '.join(equity['stale_quotes'])}")
 
     open_positions = [p for p in result["positions"] if p["status"] == "open"]
     closed_positions = [p for p in result["positions"] if p["status"] == "closed"]

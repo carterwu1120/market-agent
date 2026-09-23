@@ -45,10 +45,15 @@ async def evaluate_paper_trades() -> dict:
     symbols = list({p["symbol"] for p in open_positions})
     prices = await asyncio.gather(*[get_quote(s) for s in symbols], return_exceptions=True)
     current_price_map = {}
+    stale_symbols: set[str] = set()
     for symbol, result in zip(symbols, prices):
-        if isinstance(result, Exception) or result.get("error"):
+        if isinstance(result, Exception):
+            continue
+        if result.get("error") and not result.get("is_stale"):
             continue
         current_price_map[symbol] = result.get("price")
+        if result.get("is_stale"):
+            stale_symbols.add(symbol)
 
     scored = []
     for p in positions:
@@ -59,7 +64,10 @@ async def evaluate_paper_trades() -> dict:
                 if current_price is not None
                 else None
             )
-            scored.append({**p, "current_price": current_price, "pnl_pct": pnl})
+            scored.append({
+                **p, "current_price": current_price, "pnl_pct": pnl,
+                "quote_is_stale": p["symbol"] in stale_symbols,
+            })
         else:
             pnl = calc_pnl_pct("buy", p["entry_price"], p["exit_price"])
             scored.append({**p, "current_price": p["exit_price"], "pnl_pct": pnl})
@@ -137,6 +145,10 @@ def simulate_portfolio_equity(scored_positions: list[dict]) -> dict:
         p["symbol"] for p in scored_positions
         if p["status"] == "open" and p.get("current_price") is None
     ]
+    stale_quotes = [
+        p["symbol"] for p in scored_positions
+        if p["status"] == "open" and p.get("quote_is_stale")
+    ]
     current_equity = cash + open_value if not missing_quotes else None
 
     # Sort by closed_at (a real timestamp) not exit_date (day-granularity
@@ -162,6 +174,7 @@ def simulate_portfolio_equity(scored_positions: list[dict]) -> dict:
         "current_cash": round(cash, 0),
         "valuation_complete": not missing_quotes,
         "missing_quotes": missing_quotes,
+        "stale_quotes": stale_quotes,
         "open_positions_value": round(open_value, 0) if not missing_quotes else None,
         "current_equity": round(current_equity, 0) if current_equity is not None else None,
         "total_return_pct": round((current_equity - starting) / starting * 100, 2)

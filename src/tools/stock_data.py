@@ -7,7 +7,7 @@ so the synthesizer agent can cite them in the final report.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 import pandas as pd
@@ -49,6 +49,32 @@ def _tw_ticker(symbol: str) -> str:
 
 
 # ── Price & Basic Info ────────────────────────────────────────────────────────
+
+async def get_latest_price(symbol: str) -> dict[str, Any]:
+    """Fetch only the latest price fields needed by trading and valuation.
+
+    Unlike get_stock_price(), this deliberately avoids ``Ticker.info`` and
+    ``fast_info``: those company/profile calls are much heavier than the
+    short history request needed for a quote.
+    """
+    ticker_sym = _tw_ticker(symbol)
+
+    def _fetch():
+        return yf.Ticker(ticker_sym).history(period="5d")
+
+    try:
+        hist = await asyncio.to_thread(_fetch)
+        if hist.empty:
+            return {"symbol": ticker_sym, "error": "empty price history"}
+        return {
+            "symbol": ticker_sym,
+            "last_price": float(hist["Close"].iloc[-1]),
+            "fetched_at": datetime.now(UTC).isoformat(),
+            "source": f"https://finance.yahoo.com/quote/{ticker_sym}",
+        }
+    except Exception as exc:
+        logger.warning(f"Latest price fetch failed [{ticker_sym}]: {exc}")
+        return {"symbol": ticker_sym, "error": str(exc)}
 
 async def get_stock_price(symbol: str) -> dict[str, Any]:
     """Fetch latest price and basic market data via yfinance."""

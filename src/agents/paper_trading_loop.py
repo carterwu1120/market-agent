@@ -57,7 +57,7 @@ from src.memory.store import init_storage
 from src.tools.chip_data import get_institutional_streak
 from src.tools.company_moat import get_company_moat_evidence
 from src.tools.discord_tools import send_channel_message
-from src.tools.market_data import get_quote
+from src.tools.market_data import get_quote, get_quote_metrics
 from src.tools.paper_trading_actions import buy, sell
 from src.tools.stock_data import get_technical_indicators
 
@@ -309,7 +309,7 @@ async def _check_mechanical_stop_loss() -> None:
         )
         quote = await get_quote(p["symbol"])
         price = quote.get("price")
-        if quote.get("error") or not price:
+        if quote.get("error") or quote.get("is_stale") or not price:
             continue
         pnl = calc_pnl_pct("buy", p["entry_price"], price)
         if pnl is not None and pnl <= -threshold:
@@ -354,16 +354,19 @@ async def _check_conditions() -> None:
     for symbol, symbol_conditions in by_symbol.items():
         indicator_values: dict[str, float] = {}
 
-        quote = await get_quote(symbol)
-        if not quote.get("error") and quote.get("price"):
-            indicator_values["close"] = quote["price"]
+        condition_fields = {c["indicator"] for c in symbol_conditions}
+        if "close" in condition_fields:
+            quote = await get_quote(symbol)
+            if not quote.get("error") and not quote.get("is_stale") and quote.get("price"):
+                indicator_values["close"] = quote["price"]
 
-        technical = await get_technical_indicators(symbol)
-        if not technical.get("error"):
-            for field in _CONDITION_TECHNICAL_FIELDS:
-                value = technical.get(field)
-                if value is not None:
-                    indicator_values[field] = value
+        if condition_fields.intersection(_CONDITION_TECHNICAL_FIELDS):
+            technical = await get_technical_indicators(symbol)
+            if not technical.get("error"):
+                for field in _CONDITION_TECHNICAL_FIELDS:
+                    value = technical.get(field)
+                    if value is not None:
+                        indicator_values[field] = value
 
         # Only fetch the institutional streak (several sequential TWSE API
         # calls, cached but still real network work) when a condition on
@@ -666,6 +669,7 @@ async def _snapshot_equity() -> None:
     await log_event("equity_snapshot", json.dumps({
         "equity": simulate_portfolio_equity(result["positions"]),
         "positions": result["positions"],
+        "quote_metrics": get_quote_metrics(),
     }, ensure_ascii=False, default=str))
 
 

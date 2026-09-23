@@ -133,6 +133,8 @@ async def buy(
 
         quote = await get_quote(symbol)
         price = quote.get("price")
+        if quote.get("is_stale"):
+            return {"error": f"{symbol} 行情已過期，為避免錯價交易已取消"}
         if quote.get("error") or not price:
             return {
                 "error": f"{symbol} 無法取得行情，交易取消：{quote.get('error', '無資料')}"
@@ -209,6 +211,8 @@ async def sell(symbol: str, reason: str, exit_reason: str) -> dict:
 
         quote = await get_quote(symbol)
         price = quote.get("price")
+        if quote.get("is_stale"):
+            return {"error": f"{symbol} 行情已過期，為避免錯價交易已取消"}
         if quote.get("error") or not price:
             return {
                 "error": f"{symbol} 無法取得行情，交易取消：{quote.get('error', '無資料')}"

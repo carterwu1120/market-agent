@@ -238,6 +238,8 @@ Codex 的研究呼叫會用目前虛擬環境的 Python 絕對路徑啟動本機
 
 ```env
 MARKET_DATA_PROVIDER=yahoo
+QUOTE_CACHE_TTL_SECONDS=15
+QUOTE_STALE_FALLBACK_SECONDS=300
 ```
 
 這個接縫預留給之後新增唯讀的 `ShioajiMarketDataProvider`：即時行情可以換成
